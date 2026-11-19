@@ -6,12 +6,12 @@ Up First (19 Nov), Al Jazeera and wire reporting. Each story below
 appeared in at least one major outlet's 19 November 2026 coverage.
 
 1. **GTA VI begins global rollout.** Gamers enter Vice City as Grand
-   Theft Auto VI launches worldwide after a 13-year wait; UK release
-   confirmed after the long wait for the series' return.
+   Theft Auto VI launches worldwide after a 13-year wait; the UK
+   release is confirmed after the long wait for the series' return.
 2. **Trump, Xi and Putin shake hands in Shenzhen.** China's leader
    hugged President Trump on the tarmac as he arrived for the APEC
-   summit; the three leaders are expected to hold a trilateral meeting
-   on Thursday, with Ukraine on the agenda.
+   summit; the three leaders are expected to hold a trilateral
+   meeting on Thursday, with Ukraine on the agenda.
 3. **Anthropic debuts in the biggest IPO ever.** The Claude maker
    raises $81.3bn at $83 a share (ticker ANT) — the largest stock
    market debut in history, valued at more than $1.4tn.
