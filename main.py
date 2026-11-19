@@ -4,15 +4,16 @@
 Entrypoint for the make.fun bounty "Sum up 19 November's world
 news in one image". The poster is a fixed asset (assets/entry.png)
 rendered at build time from verified reporting of 19 Nov 2026
-(see NEWS.md and build_image.py). This program is deliberately tiny
-and deterministic: it validates the asset, then copies its exact
-bytes to /output/entry.png, so two runs always produce identical
-output.
+(see NEWS.md and build_image.py). The program is deliberately tiny
+and deterministic: it validates the asset, copies its exact bytes
+to /output/entry.png, then reads the copy back to prove the two
+files are byte-identical. Two runs always produce identical output.
 
 Standard library only. No network. No randomness. No clock reads.
 """
 import hashlib
 import struct
+import sys
 from pathlib import Path
 
 ASSET = Path(__file__).resolve().parent / "assets" / "entry.png"
@@ -20,6 +21,7 @@ OUTPUT = Path("/output") / "entry.png"
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_BYTES = 1_048_576
 WANT_W, WANT_H = 1024, 1024
+STORIES = 12
 
 
 def png_size(data):
@@ -39,7 +41,11 @@ def png_size(data):
 
 def load_asset():
     """Read and validate the bundled poster; return its bytes."""
-    data = ASSET.read_bytes()
+    try:
+        data = ASSET.read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            "assets/entry.png is missing — run build_image.py first")
     if len(data) > MAX_BYTES:
         raise ValueError("assets/entry.png exceeds the 1 MiB limit")
     w, h = png_size(data)
@@ -50,17 +56,24 @@ def load_asset():
     return data
 
 
-def main():
-    data = load_asset()
+def write_output(data):
+    """Write the asset to /output/entry.png and verify the copy."""
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(data)
-    # read the copy back and confirm it is byte-identical to the asset
     written = OUTPUT.read_bytes()
     if written != data:
         raise ValueError("/output/entry.png does not match assets/entry.png")
+    return written
+
+
+def main():
+    data = load_asset()
+    write_output(data)
     digest = hashlib.sha256(data).hexdigest()
-    print("entry.png %d bytes sha256=%s" % (len(data), digest))
+    print("entry.png %d bytes %dx%d sha256=%s stories=%d -> %s"
+          % (len(data), WANT_W, WANT_H, digest, STORIES, OUTPUT))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
