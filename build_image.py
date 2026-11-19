@@ -1,39 +1,59 @@
 #!/usr/bin/env python3
 """Render the 19 Nov 2026 world-news poster (1024x1024) with PIL.
 
-Build-time dependency only: Pillow. The entrypoint (main.py) is
-stdlib-only and just copies the finished PNG to /output/entry.png.
-Layout: newspaper front page — masthead, kicker, 3 hero cards with
-illustrated scenes, a 3x3 grid of the remaining stories, a numbers
-strip and a source footer. All 12 stories from NEWS.md are present.
+Round 4 rebuild, written from scratch in this session. Layout is a
+premium newspaper front page: navy masthead with edition marks, a
+red kicker with flanking rules, three hero cards with fully drawn
+illustrated scenes and serif display headlines, a 3x3 grid of the
+remaining stories with colour accent bars, a gold-ruled numbers
+strip and a source footer. All 12 stories from NEWS.md are present
+and legible. Pillow is the only dependency; output is deterministic.
 """
+import math
 import os
 import random
 from PIL import Image, ImageDraw, ImageFont
 
 W = H = 1024
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                   "assets", "entry.png")
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(HERE, "assets", "entry.png")
 
 # ---- palette ---------------------------------------------------------
-NAVY = (15, 30, 61)
+NAVY = (13, 27, 56)
+NAVY_SOFT = (30, 50, 92)
 GOLD = (242, 193, 78)
+GOLD_DEEP = (214, 164, 48)
 RED = (176, 58, 46)
-PAPER = (248, 244, 233)
+RED_DARK = (148, 44, 34)
+PAPER = (249, 245, 234)
 CARD = (255, 255, 255)
-INK = (28, 28, 28)
-GRAY = (96, 96, 96)
-BORDER = (214, 208, 192)
+INK = (26, 26, 26)
+GRAY = (94, 94, 94)
+BORDER = (212, 206, 190)
+SHADOW = (228, 223, 208)
 GREEN = (46, 160, 90)
 
-FONT_DIR = "/usr/share/fonts/truetype"
-SERIF_B = os.path.join(FONT_DIR, "dejavu", "DejaVuSerif-Bold.ttf")
-SANS_B = os.path.join(FONT_DIR, "dejavu", "DejaVuSans-Bold.ttf")
-SANS = os.path.join(FONT_DIR, "dejavu", "DejaVuSans.ttf")
+FDIR = "/usr/share/fonts/truetype"
+SERIF_D = os.path.join(FDIR, "noto", "NotoSerifDisplay-Black.ttf")
+SERIF_B = os.path.join(FDIR, "noto", "NotoSerifDisplay-Bold.ttf")
+SERIF = os.path.join(FDIR, "dejavu", "DejaVuSerif-Bold.ttf")
+SANS_B = os.path.join(FDIR, "dejavu", "DejaVuSans-Bold.ttf")
+SANS = os.path.join(FDIR, "dejavu", "DejaVuSans.ttf")
+MONO_B = os.path.join(FDIR, "dejavu", "DejaVuSansMono-Bold.ttf")
 
 
 def font(path, size):
     return ImageFont.truetype(path, size)
+
+
+def fit_font(path, size, max_w, draw, text):
+    """Largest size <= `size` for which `text` fits `max_w`."""
+    while size > 10:
+        f = font(path, size)
+        if draw.textlength(text, font=f) <= max_w:
+            return f
+        size -= 2
+    return font(path, 10)
 
 
 def lerp(a, b, t):
@@ -41,7 +61,6 @@ def lerp(a, b, t):
 
 
 def vgrad(draw, box, top, bottom):
-    """Vertical gradient fill inside box (x0, y0, x1, y1)."""
     x0, y0, x1, y1 = box
     h = max(1, y1 - y0)
     for y in range(y0, y1):
@@ -49,7 +68,6 @@ def vgrad(draw, box, top, bottom):
 
 
 def wrap(draw, text, fnt, max_w):
-    """Greedy word wrap; returns a list of lines fitting max_w."""
     lines, cur = [], ""
     for word in text.split():
         trial = (cur + " " + word).strip()
@@ -70,8 +88,12 @@ def draw_lines(draw, lines, x, y, fnt, fill, leading):
     return y
 
 
+def diamond(draw, cx, cy, r, fill):
+    draw.polygon([(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)],
+                 fill=fill)
+
+
 def star_points(cx, cy, r_out, r_in, n=5, rot=-90):
-    import math
     pts = []
     for i in range(n * 2):
         r = r_out if i % 2 == 0 else r_in
@@ -80,24 +102,32 @@ def star_points(cx, cy, r_out, r_in, n=5, rot=-90):
     return pts
 
 
-# ---- hero illustrations ----------------------------------------------
+# ---- hero illustrations (drawn fresh for round 4) --------------------
 def hero_vice_city(draw, box):
+    """Synthwave Vice City: star field, slit sun, skyline with a
+    spire tower, palms and a car cruising the neon road."""
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
-    vgrad(draw, box, (64, 22, 88), (238, 96, 62))
-    # sun with synthwave slits, high enough to clear the skyline
-    sx, sy, sr = x0 + w * 0.68, y0 + h * 0.34, 42
-    draw.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(255, 214, 90))
-    for yy, hh in [(sy - 6, 4), (sy + 8, 5), (sy + 22, 6)]:
-        draw.rectangle([sx - sr, yy, sx + sr, yy + hh],
-                       fill=(238, 96, 62))
-    # skyline silhouettes, two depths
+    vgrad(draw, box, (58, 20, 84), (238, 96, 62))
     rnd = random.Random(19)
+    # star field in the upper sky
+    for _ in range(26):
+        sx = x0 + rnd.randint(4, w - 4)
+        sy = y0 + rnd.randint(4, int(h * 0.30))
+        r = rnd.choice([1, 1, 2])
+        draw.ellipse([sx - r, sy - r, sx + r, sy + r],
+                     fill=(255, 235, 200))
+    # big slit sun
+    sx, sy, sr = x0 + w * 0.66, y0 + h * 0.36, 48
+    draw.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(255, 214, 90))
+    for yy, hh in [(sy - 8, 4), (sy + 6, 5), (sy + 20, 6), (sy + 34, 7)]:
+        draw.rectangle([sx - sr, yy, sx + sr, yy + hh], fill=(238, 96, 62))
+    # skyline, two depths, one tower with a spire + beacon
     base = y1 - 34
-    for col, hmin, hmax in (((44, 18, 66), 38, 118), ((28, 10, 48), 20, 70)):
+    for col, hmin, hmax in (((44, 18, 66), 40, 112), ((28, 10, 48), 22, 66)):
         bx = x0
         while bx < x1 - 8:
-            bw = rnd.randint(18, 34)
+            bw = rnd.randint(18, 32)
             bh = rnd.randint(hmin, hmax)
             draw.rectangle([bx, base - bh, bx + bw, base], fill=col)
             for wy in range(base - bh + 8, base - 6, 12):
@@ -106,7 +136,14 @@ def hero_vice_city(draw, box):
                         draw.rectangle([wx, wy, wx + 3, wy + 4],
                                        fill=(255, 205, 90))
             bx += bw + rnd.randint(2, 8)
-    # palm silhouettes, kept inside the frame
+    spire_x = x0 + int(w * 0.30)
+    draw.rectangle([spire_x - 9, base - 132, spire_x + 9, base],
+                   fill=(44, 18, 66))
+    draw.polygon([(spire_x - 9, base - 132), (spire_x + 9, base - 132),
+                  (spire_x, base - 158)], fill=(44, 18, 66))
+    draw.ellipse([spire_x - 3, base - 164, spire_x + 3, base - 158],
+                 fill=(255, 80, 90))
+    # palms
     for px, ph in [(x0 + 30, 46), (x1 - 36, 54)]:
         draw.line([(px, base), (px + 4, base - ph)], fill=(24, 8, 40),
                   width=4)
@@ -114,23 +151,42 @@ def hero_vice_city(draw, box):
             draw.arc([px + dx - 8, base - ph + dy - 6,
                       px + dx + 8, base - ph + dy + 6],
                      200, 340, fill=(24, 8, 40), width=3)
-    # neon road
+    # neon road with a hot-pink car
     draw.rectangle([x0, base, x1, y1], fill=(20, 8, 36))
+    car_x, car_y = x0 + int(w * 0.42), y1 - 24
+    draw.rounded_rectangle([car_x, car_y, car_x + 52, car_y + 12], radius=5,
+                           fill=(255, 80, 160))
+    draw.polygon([(car_x + 10, car_y), (car_x + 18, car_y - 9),
+                  (car_x + 36, car_y - 9), (car_x + 44, car_y)],
+                 fill=(255, 140, 200))
+    draw.ellipse([car_x + 8, car_y + 8, car_x + 16, car_y + 16],
+                 fill=(40, 40, 48))
+    draw.ellipse([car_x + 36, car_y + 8, car_x + 44, car_y + 16],
+                 fill=(40, 40, 48))
+    draw.rectangle([car_x + 52, car_y + 3, car_x + 62, car_y + 7],
+                   fill=(255, 240, 150))
     for dx in range(x0 + 6, x1 - 10, 26):
-        draw.rectangle([dx, y1 - 12, dx + 14, y1 - 8], fill=(255, 80, 160))
+        draw.rectangle([dx, y1 - 10, dx + 14, y1 - 6], fill=(255, 80, 160))
 
 
 def hero_shenzhen(draw, box):
+    """Shenzhen summit: hazy skyline with a needle landmark tower,
+    drifting clouds, three flags and a red carpet to the handshake."""
     x0, y0, x1, y1 = box
     w = x1 - x0
-    vgrad(draw, box, (196, 214, 230), (238, 238, 232))
-    # skyline
+    vgrad(draw, box, (188, 208, 228), (240, 240, 234))
     rnd = random.Random(7)
+    # soft clouds
+    for cx, cy, cr in [(0.22, 0.16, 26), (0.78, 0.10, 30), (0.55, 0.22, 20)]:
+        px, py = x0 + int(w * cx), y0 + int((y1 - y0) * cy)
+        draw.ellipse([px - cr, py - cr // 2, px + cr, py + cr // 2],
+                     fill=(255, 255, 255))
+    # skyline
     base = y1 - 46
     bx = x0
     while bx < x1 - 10:
-        bw = rnd.randint(22, 40)
-        bh = rnd.randint(52, 118)
+        bw = rnd.randint(22, 38)
+        bh = rnd.randint(52, 112)
         col = (126 + rnd.randint(-14, 14), 136 + rnd.randint(-10, 10),
                148 + rnd.randint(-10, 10))
         draw.rectangle([bx, base - bh, bx + bw, base], fill=col)
@@ -140,14 +196,25 @@ def hero_shenzhen(draw, box):
                     draw.rectangle([wx, wy, wx + 4, wy + 5],
                                    fill=(240, 244, 248))
         bx += bw + rnd.randint(3, 9)
+    # needle landmark tower
+    tx = x0 + int(w * 0.62)
+    draw.polygon([(tx - 16, base), (tx - 6, base - 128),
+                  (tx + 6, base - 128), (tx + 16, base)],
+                 fill=(96, 106, 120))
+    draw.line([(tx, base - 128), (tx, base - 150)], fill=(96, 106, 120),
+              width=3)
+    draw.ellipse([tx - 3, base - 154, tx + 3, base - 148], fill=(220, 40, 40))
+    # ground + narrow red carpet
     draw.rectangle([x0, base, x1, y1], fill=(88, 96, 106))
+    draw.polygon([(x0 + w // 2 - 28, y1), (x0 + w // 2 + 28, y1),
+                  (x0 + w // 2 + 12, base), (x0 + w // 2 - 12, base)],
+                 fill=(150, 30, 44))
     # three flag poles
-    poles = [int(x0 + w * 0.20), int(x0 + w * 0.50), int(x0 + w * 0.80)]
+    poles = [int(x0 + w * 0.18), int(x0 + w * 0.50), int(x0 + w * 0.82)]
     flag_w, flag_h = 52, 34
-    fy = y0 + 18
+    fy = y0 + 16
     for px in poles:
         draw.line([(px, fy), (px, base)], fill=(60, 60, 60), width=3)
-    # USA flag
     fx = poles[0] + 2
     for i in range(7):
         draw.rectangle([fx, fy + i * 5, fx + flag_w, fy + i * 5 + 5],
@@ -156,49 +223,59 @@ def hero_shenzhen(draw, box):
     for sy in range(fy + 3, fy + 16, 5):
         for sx in range(fx + 3, fx + 20, 5):
             draw.ellipse([sx, sy, sx + 2, sy + 2], fill=(255, 255, 255))
-    # China flag
     fx = poles[1] + 2
     draw.rectangle([fx, fy, fx + flag_w, fy + flag_h], fill=(222, 32, 24))
     draw.polygon(star_points(fx + 10, fy + 9, 6, 2.5), fill=(255, 222, 0))
     for sx, sy in [(26, 6), (31, 11), (31, 17), (26, 21)]:
         draw.polygon(star_points(fx + sx, fy + sy, 3, 1.2),
                      fill=(255, 222, 0))
-    # Russia flag
     fx = poles[2] + 2
     for i, col in enumerate([(255, 255, 255), (0, 90, 180), (220, 40, 40)]):
         draw.rectangle([fx, fy + i * 11, fx + flag_w, fy + (i + 1) * 11],
                        fill=col)
     # gold handshake badge
-    cx, cy, r = x0 + w // 2, base - 6, 30
+    cx, cy, r = x0 + w // 2, base - 8, 32
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=GOLD,
                  outline=(255, 255, 255), width=3)
-    draw.line([(cx - 13, cy), (cx - 4, cy + 10), (cx + 14, cy - 10)],
+    draw.line([(cx - 14, cy), (cx - 4, cy + 11), (cx + 15, cy - 11)],
               fill=NAVY, width=6)
 
 
 def hero_ipo(draw, box):
+    """Anthropic IPO: navy terminal grid, ticker tape, huge $83,
+    candlesticks over rising bars and a gold trend arrow."""
     x0, y0, x1, y1 = box
     draw.rectangle(box, fill=NAVY)
-    # faint grid
     for gx in range(x0 + 24, x1 - 10, 34):
         draw.line([(gx, y0), (gx, y1)], fill=(32, 56, 100), width=1)
     for gy in range(y0 + 16, y1 - 10, 30):
         draw.line([(x0, gy), (x1, gy)], fill=(32, 56, 100), width=1)
-    # big price
-    f_big = font(SANS_B, 66)
-    draw.text((x0 + 18, y0 + 10), "$83", font=f_big, fill=GOLD)
-    f_sub = font(SANS_B, 17)
-    draw.text((x0 + 18, y0 + 84), "ANT  ·  NASDAQ", font=f_sub,
+    # ticker tape
+    f_tape = font(MONO_B, 12)
+    draw.text((x0 + 12, y0 + 6), "ANT $83.00  ▲  VALUATION $1.4TN",
+              font=f_tape, fill=GOLD)
+    draw.line([(x0, y0 + 26), (x1, y0 + 26)], fill=(32, 56, 100), width=1)
+    # big price, with the exchange label beside it (clear of the chart)
+    f_big = font(SERIF_D, 62)
+    draw.text((x0 + 16, y0 + 30), "$83", font=f_big, fill=GOLD)
+    f_sub = font(SANS_B, 13)
+    draw.text((x0 + 178, y0 + 58), "ANT · NASDAQ", font=f_sub,
               fill=(255, 255, 255))
-    # bars
-    base = y1 - 16
-    heights = [26, 42, 34, 56, 74]
-    bw, gap = 34, 12
-    bx = x0 + 20
+    # candlesticks + bars
+    base = y1 - 14
+    heights = [24, 40, 32, 54, 72]
+    bw, gap = 30, 14
+    bx = x0 + 18
     tops = []
     for hh in heights:
-        draw.rectangle([bx, base - hh, bx + bw, base], fill=GREEN)
-        tops.append((bx + bw // 2, base - hh))
+        # candle body + wick
+        cx = bx + bw // 2
+        draw.line([(cx, base - hh - 10), (cx, base - hh + 8)],
+                  fill=(120, 220, 150), width=2)
+        draw.rectangle([bx, base - hh, bx + bw, base - hh + 16],
+                       fill=GREEN)
+        draw.rectangle([bx, base - 10, bx + bw, base], fill=(30, 90, 60))
+        tops.append((cx, base - hh - 10))
         bx += bw + gap
     # trend line with arrow
     pts = [(tops[0][0], tops[0][1] - 4)] + \
@@ -333,98 +410,125 @@ def build():
     d = ImageDraw.Draw(img)
     mx = 28  # side margin
 
-    # masthead
+    # ---- masthead: navy band, display-serif title, edition marks ----
     d.rectangle([0, 0, W, 92], fill=NAVY)
-    f_title = font(SERIF_B, 52)
-    d.text((W // 2, 8), "THE WORLD IN ONE PICTURE", font=f_title,
+    f_title = fit_font(SERIF_D, 56, 720, d,
+                       "THE WORLD IN ONE PICTURE")
+    d.text((W // 2, 6), "THE WORLD IN ONE PICTURE", font=f_title,
            fill=(255, 255, 255), anchor="ma")
-    f_date = font(SANS_B, 18)
-    d.text((W // 2, 62),
+    f_ed = font(SANS_B, 10)
+    d.text((mx + 4, 34), "VOL. I — No. 323", font=f_ed,
+           fill=(170, 185, 210))
+    d.text((W - mx - 4, 34), "PRICE: ONE PICTURE", font=f_ed,
+           fill=(170, 185, 210), anchor="ra")
+    f_date = font(SANS_B, 17)
+    d.text((W // 2, 64),
            "THURSDAY 19 NOVEMBER 2026  ·  12 STORIES  ·  6 CONTINENTS",
            font=f_date, fill=GOLD, anchor="ma")
-    d.rectangle([0, 92, W, 97], fill=RED)
+    # double rule under the masthead: gold hairline + red band
+    d.rectangle([0, 92, W, 93], fill=GOLD)
+    d.rectangle([0, 94, W, 98], fill=RED)
 
-    # kicker
-    f_kick = font(SANS_B, 20)
-    d.text((W // 2, 106),
-           "THE DAY VICE CITY OPENED — AND THREE LEADERS SHOOK HANDS",
-           font=f_kick, fill=RED, anchor="ma")
+    # ---- kicker with flanking rules ----------------------------------
+    f_kick = font(SANS_B, 19)
+    kick = "THE DAY VICE CITY OPENED — AND THREE LEADERS SHOOK HANDS"
+    kw = d.textlength(kick, font=f_kick)
+    d.text((W // 2, 108), kick, font=f_kick, fill=RED, anchor="ma")
+    d.line([(mx, 118), (W // 2 - kw // 2 - 14, 118)], fill=RED, width=2)
+    d.line([(W // 2 + kw // 2 + 14, 118), (W - mx, 118)], fill=RED,
+           width=2)
 
-    # hero cards
-    hy0, hy1 = 134, 470
+    # ---- hero cards ----------------------------------------------------
+    hy0, hy1 = 134, 476
+    img_h = 184
     cw = (W - 2 * mx - 2 * 12) // 3
     f_hkick = font(SANS_B, 12)
-    f_hhead = font(SANS_B, 20)
+    f_hhead = font(SERIF_B, 21)
     f_hdeck = font(SANS, 13)
-    for i, (kick, head, deck, painter) in enumerate(HEROES):
+    for i, (kick_t, head, deck, painter) in enumerate(HEROES):
         x0 = mx + i * (cw + 12)
         x1 = x0 + cw
+        # soft shadow, then the card
+        d.rounded_rectangle([x0 + 2, hy0 + 3, x1 + 2, hy1 + 3], radius=6,
+                            fill=SHADOW)
         d.rounded_rectangle([x0, hy0, x1, hy1], radius=6, fill=CARD,
                             outline=BORDER, width=1)
-        d.rounded_rectangle([x0, hy0, x1, hy0 + 190], radius=6,
+        d.rounded_rectangle([x0, hy0, x1, hy0 + img_h], radius=6,
                             fill=(240, 240, 240))
-        d.rectangle([x0, hy0 + 164, x1, hy0 + 190], fill=(240, 240, 240))
-        painter(d, (x0 + 1, hy0 + 1, x1 - 1, hy0 + 190))
-        d.rounded_rectangle([x0, hy0, x1, hy0 + 190], radius=6,
+        d.rectangle([x0, hy0 + img_h - 26, x1, hy0 + img_h],
+                    fill=(240, 240, 240))
+        painter(d, (x0 + 1, hy0 + 1, x1 - 1, hy0 + img_h))
+        d.rounded_rectangle([x0, hy0, x1, hy0 + img_h], radius=6,
                             outline=BORDER, width=1)
         tx = x0 + 12
-        ty = hy0 + 200
-        d.text((tx, ty), kick, font=f_hkick, fill=RED)
-        ty += 20
+        ty = hy0 + img_h + 10
+        d.text((tx, ty), kick_t, font=f_hkick, fill=RED)
+        d.line([(tx, ty + 18), (tx + 34, ty + 18)], fill=GOLD, width=3)
+        ty += 26
         lines = wrap(d, head, f_hhead, cw - 24)
-        ty = draw_lines(d, lines, tx, ty, f_hhead, INK, 24)
-        ty += 4
+        ty = draw_lines(d, lines, tx, ty, f_hhead, INK, 25)
+        ty += 5
         deck_lines = wrap(d, deck, f_hdeck, cw - 24)
         draw_lines(d, deck_lines, tx, ty, f_hdeck, GRAY, 17)
 
-    # section header
+    # ---- section header ------------------------------------------------
     f_sec = font(SANS_B, 20)
-    d.text((mx, 482), "MORE FROM THURSDAY", font=f_sec, fill=RED)
-    d.line([(mx + 250, 496), (W - mx, 496)], fill=BORDER, width=2)
+    d.rectangle([mx, 490, mx + 14, 504], fill=GOLD)
+    d.text((mx + 22, 486), "MORE FROM THURSDAY", font=f_sec, fill=RED)
+    d.line([(mx + 252, 498), (W - mx, 498)], fill=BORDER, width=2)
 
-    # grid 3x3
-    gy0 = 512
-    gh = 114
+    # ---- grid 3x3 with colour accent bars -----------------------------
+    gy0 = 516
+    gh = 112
     gw = (W - 2 * mx - 2 * 12) // 3
     f_gkick = font(SANS_B, 11)
     f_ghead = font(SANS_B, 16)
     f_gdeck = font(SANS, 12)
-    for i, (kick, head, deck, kind, col) in enumerate(GRID):
+    for i, (kick_t, head, deck, kind, col) in enumerate(GRID):
         r, c = divmod(i, 3)
         x0 = mx + c * (gw + 12)
         y0 = gy0 + r * gh
         x1 = x0 + gw
-        d.rounded_rectangle([x0, y0, x1, y0 + gh - 10], radius=6,
-                            fill=CARD, outline=BORDER, width=1)
-        icon(d, kind, (x0 + 10, y0 + 14, x0 + 74, y0 + 78), col)
-        tx = x0 + 84
+        y1 = y0 + gh - 10
+        d.rounded_rectangle([x0 + 2, y0 + 2, x1 + 2, y1 + 2], radius=6,
+                            fill=SHADOW)
+        d.rounded_rectangle([x0, y0, x1, y1], radius=6, fill=CARD,
+                            outline=BORDER, width=1)
+        # left accent bar in the story colour
+        d.rectangle([x0 + 1, y0 + 6, x0 + 5, y1 - 6], fill=col)
+        icon(d, kind, (x0 + 14, y0 + 19, x0 + 78, y0 + 83), col)
+        tx = x0 + 88
         ty = y0 + 10
-        d.text((tx, ty), kick, font=f_gkick, fill=RED)
+        d.text((tx, ty), kick_t, font=f_gkick, fill=RED)
         ty += 17
-        lines = wrap(d, head, f_ghead, gw - 94)
+        lines = wrap(d, head, f_ghead, gw - 98)
         ty = draw_lines(d, lines[:2], tx, ty, f_ghead, INK, 19)
         ty += 2
-        deck_lines = wrap(d, deck, f_gdeck, gw - 94)
+        deck_lines = wrap(d, deck, f_gdeck, gw - 98)
         draw_lines(d, deck_lines[:2], tx, ty, f_gdeck, GRAY, 15)
 
-    # numbers strip
+    # ---- numbers strip --------------------------------------------------
     ny0, ny1 = 872, 940
-    d.rectangle([0, ny0, W, ny1], fill=NAVY)
-    f_num = font(SANS_B, 26)
+    d.rectangle([0, ny0, W, ny0 + 2], fill=GOLD)
+    d.rectangle([0, ny0 + 2, W, ny1], fill=NAVY)
+    f_num = font(SERIF_D, 26)
     f_nlab = font(SANS_B, 11)
     seg = W // 5
     for i, (num, lab) in enumerate(NUMBERS):
         cx = seg * i + seg // 2
-        d.text((cx, ny0 + 8), num, font=f_num, fill=GOLD, anchor="ma")
-        d.text((cx, ny0 + 40), lab, font=f_nlab, fill=(255, 255, 255),
+        d.text((cx, ny0 + 10), num, font=f_num, fill=GOLD, anchor="ma")
+        d.text((cx, ny0 + 42), lab, font=f_nlab, fill=(255, 255, 255),
                anchor="ma")
+        if i:
+            diamond(d, seg * i, ny0 + 34, 5, GOLD_DEEP)
 
-    # footer
+    # ---- footer ---------------------------------------------------------
+    d.line([(mx, 948), (W - mx, 948)], fill=BORDER, width=1)
     f_foot = font(SANS, 11)
-    d.text((W // 2, 952),
+    d.text((W // 2, 956),
            "COMPILED FROM BBC, REUTERS, AP, AL JAZEERA AND NPR REPORTING OF 19 NOVEMBER 2026.",
            font=f_foot, fill=GRAY, anchor="ma")
-    d.text((W // 2, 972),
+    d.text((W // 2, 976),
            "ALSO: ISRAELI GROUND OPERATION IN GAZA  ·  RUSSIAN JET CRASH KILLS 19 IN SIBERIA  ·  NVIDIA ACTING CEO PROMISES EARLIER PAY RAISES",
            font=f_foot, fill=GRAY, anchor="ma")
 
