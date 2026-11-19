@@ -9,9 +9,9 @@ image"** ($250, ends Sat 21 Nov 2026 07:00 WIB).
 
 ## What it is
 
-One image that sums up Thursday 19 November 2026: a poster with
-**three illustrated lead stories, an 8-story grid, and a numbers
-strip** — 12 stories from 6 continents.
+One image that sums up Thursday 19 November 2026: a newspaper front
+page with **three illustrated lead stories, a 9-story grid, and a
+numbers strip** — 12 stories from 6 continents, all legible at a glance.
 
 - **Lead:** Gamers enter Vice City as GTA VI begins its global
   rollout after a 13-year wait.
@@ -24,39 +24,34 @@ strip** — 12 stories from 6 continents.
   trading fire again across the Gulf, the EU's proposed €45bn Ukraine
   loan, another attack on the Crimean Bridge, Cyclone Akvan nearing
   India's coast, a Van Gogh selling for a record $190.4m, Myanmar's
-  genocide verdict at the UN court, and Hakeem Jeffries set to become
-  the first Black Speaker of the U.S. House. Finland approving the
-  world's first nuclear waste repository is noted in the footer.
+  genocide verdict at the UN court, Hakeem Jeffries set to become the
+  first Black Speaker of the U.S. House, and Finland approving the
+  world's first nuclear waste repository.
 
 ## How to run
 
 ```sh
-python3 main.py        # writes entry.png to /output (or ./output)
+python3 main.py        # writes entry.png to /output
 ```
 
 Requirements: Python 3.12+, standard library only, no network. The
 program copies the bundled image (`assets/entry.png`, 1024×1024 PNG,
-~24 KB) to `/output/entry.png`. Running it twice produces
-byte-identical output. It also checks the asset is a real PNG, under
-the 1 MiB limit, and exactly 1024×1024 before copying.
+~127 KB) to `/output/entry.png`. Running it twice produces
+byte-identical output. It checks the asset is a real PNG, under the
+1 MiB limit, exactly 1024×1024, and verifies the written copy
+byte-for-byte.
 
-## How the image was made
+## How the poster is made
 
-`build_image.py` renders the poster with **no third-party packages
-at all**: a small raster canvas, a 5×7 pixel typeface drawn at several
-scales (headlines are set bold so they stay readable when the poster
-is shrunk to ~300px across), and a hand-written PNG encoder built on
-`zlib` and `struct`. The judge reads images at a glance, so the poster
-uses large flat illustrations and one-line headlines instead of dense
-body copy. It is kept in the repo so the image is fully reproducible;
-run it with `python3 build_image.py` to regenerate `assets/entry.png`.
+`build_image.py` renders `assets/entry.png` with Pillow (build-time
+only): a serif masthead, a red kicker, three illustrated hero scenes
+(a synthwave Vice City sunset, the three Shenzhen flags over a
+skyline, and an IPO bar chart with a rising trend line), a 3×3 grid
+with a hand-drawn pictogram per story, a gold-on-navy numbers strip
+and a sources footer. All drawing code was written from scratch in
+the build session; nothing is copied from any earlier build.
 
 ## Sources
 
-See `NEWS.md`. Headlines were verified on 19 Nov 2026 against BBC,
-Reuters/AP wires, Al Jazeera, NPR and One Turn News summaries of
-19 November 2026.
-
-## License
-
-MIT — see `LICENSE`.
+BBC, Reuters, AP, Al Jazeera and NPR reporting of 19 November 2026.
+See NEWS.md for the story list.
