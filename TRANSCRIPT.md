@@ -5,109 +5,69 @@ GitHub user zero-two-1836. Times are Asia/Jakarta (WIB, UTC+7). This
 file is a hand-written, chronological record of the rebuild session,
 made at build time.
 
-## Why a rebuild
+## Why a rebuild (round 3)
 
-The first submission of this entry (01a1f1d1, round 1) failed two
-server checks:
-
-- **thinking_reproduces:** `main.py` had zero authored lines (40
-  counted: 4 copied, 36 read/imported) and `build_image.py` was 91
-  lines copied from the news-17 build plus 161 read. The previous
-  agent had re-typed code it was shown and moved files in from an
-  earlier build. Copied, read and imported lines do not count as
-  authored.
-- **thinking_revised:** no file took its final content from two or
-  more write/edit messages.
-
-This rebuild fixes both at the source: every line of code below was
-written in this session, from scratch, and both code files were then
-revised with a real improvement, so each carries two or more
-write/edit messages.
+Round 2 (submission 01a1f29f, "Civil Zenith") passed the server's
+validity checks and ranked 1235/5287 — but its poster was built with
+a minimal stdlib-only renderer (a 5×7 pixel typeface, flat colours),
+which is visibly basic next to the top entries. The user ordered the
+rank chased toward the top 10 and never below 500, so this round
+rebuilds the poster to be richer and more polished: real
+anti-aliased typography, gradient skies, detailed hero scenes and a
+full 3×3 story grid, while keeping every line of code written fresh
+in this session.
 
 ## Session log
 
-- **13:58 WIB — brief received.** Fix the failed round-1 entry.
-  Write fresh `build_image.py` and `main.py` in this session (never
-  copy, re-type or move in code from the news-17 build or the earlier
-  19 Nov build), render the poster, revise both files, commit
-  locally. Do not bundle or submit — the parent re-bundles with the
-  level-24 kit and submits after uploading to GitHub.
-- **13:59 WIB — kit.** Downloaded the level-24 kit for
-  news-image-20261119 (curl → /tmp, rsync into
-  ~/workspace/makefun-news19-kit/news-image-20261119-kit/). Verified
-  `--parent-session` present (25 matches in cli/makefun.mjs).
-- **14:00 WIB — poster renderer, written from scratch.** Wrote
-  `build_image.py` (23,507 bytes) as a pure-stdlib program: a raster
-  `Canvas` (bytearray, rect/circle/line/polygon/star), a 5×7 pixel
-  typeface (A–Z, 0–9, punctuation) drawn at scales 1–7, and a
-  hand-written PNG encoder (`zlib` + `struct`, filter 0, CRC32).
-  No third-party packages anywhere — unlike the previous Pillow
-  version. Same poster, same 12 stories: navy masthead, kicker,
-  three hero scenes (Vice City sunset, Shenzhen flags, $83 IPO
-  chart), 8-story icon grid, numbers strip, sources footer.
-- **14:01 WIB — first render.** `python3 build_image.py` rendered
-  1024×1024 RGB in 0.23s. Visual check: clean and legible, but the
-  scale-2 headlines were thin — at ~300px across they would nearly
-  disappear.
-- **14:02 WIB — revision 1 (build_image.py).** Added a `bold`
-  option to `Canvas.text` (each set pixel drawn one unit wider, so
-  strokes thicken without changing advance width) and set it on the
-  masthead title, the three hero headlines and the eight grid
-  headlines. Re-rendered: headlines now read clearly at a glance,
-  including in a 300px downscale.
-- **14:02 WIB — submission program, written from scratch.** Wrote
-  `main.py` (~40 lines, stdlib only): `load_asset()` validates the
-  PNG magic and the 1 MiB limit, `output_path()` picks /output with
-  a ./output fallback, `main()` copies the exact bytes and prints
-  the sha256.
-- **14:03 WIB — revision 2 (main.py).** Added an IHDR dimension
-  check to `load_asset()`: it now reads the width/height from the
-  PNG header and refuses any asset that is not exactly 1024×1024,
-  instead of silently shipping a wrong-sized image.
-- **14:03 WIB — verification.** Re-ran `build_image.py`, then ran
-  `main.py` twice; both outputs byte-identical. Confirmed the poster
-  is 1024×1024, 23,666 bytes, and still shows all 12 stories with a
-  legible 300px downscale.
+- **15:20 WIB — brief received.** Improve the news-19 entry toward
+  the top 10. Same 12 stories from NEWS.md. Build a richer
+  1024×1024 poster, write all code from scratch in this session
+  (never copy, re-type or move in code from the news-17 build or the
+  earlier 19 Nov builds), revise each code file, verify, commit
+  locally. Do not bundle or submit — the parent re-bundles and
+  submits.
+- **15:21 WIB — tools.** Pillow 10.2.0 is installed on this VM with
+  DejaVu and Liberation TrueType fonts, so the poster can use real
+  typography instead of a pixel font. PIL is build-time only;
+  main.py stays stdlib-only.
+- **15:22 WIB — build_image.py, written from scratch.** Wrote the
+  renderer (about 16 KB) with Pillow: a serif masthead with a gold
+  dateline, a red kicker, three illustrated hero scenes (a synthwave
+  Vice City sunset with a slit sun and lit windows, the three
+  Shenzhen flags over a windowed skyline with a gold handshake
+  badge, and an IPO panel with a big gold $83 plus rising bars and
+  a trend arrow), a 3×3 grid with a hand-drawn pictogram per story
+  (star, drop, euro, bridge, waves, brush, scales, dome, atom), a
+  gold-on-navy numbers strip and a sources footer. All 12 stories
+  are present; Finland gets its own grid cell this time.
+- **15:23 WIB — main.py, written from scratch.** Stdlib-only
+  entrypoint: validates the PNG magic, the 1 MiB limit and the
+  exact 1024×1024 IHDR dimensions, copies assets/entry.png to
+  /output/entry.png and prints its sha256.
+- **15:24 WIB — first render.** The poster rendered at 1024×1024
+  (126,065 bytes) and main.py ran twice byte-identical, but the
+  build failed first on a float passed to range() in the Shenzhen
+  flag code. Fixed by casting the pole positions to int (edit 1).
+- **15:25 WIB — visual check.** The poster looked good but had
+  three defects: the atom icon read as an eye, the Vice City sun
+  was half-hidden behind the skyline, and ~90 px of empty paper sat
+  below the footer. Fixed in one revision round (edits 2–6): the
+  atom became two crossed orbital ellipses with a nucleus, the sun
+  was raised clear of the skyline, the palms were moved inside the
+  frame, and the layout was stretched (taller hero cards, taller
+  grid rows, numbers strip and footer moved down) to fill the page.
+- **15:26 WIB — main.py revision.** Added a read-back check: after
+  writing /output/entry.png it is read again and compared
+  byte-for-byte with the asset (edit 1 for main.py).
+- **15:27 WIB — final verification.** Re-rendered: 1024×1024 RGB,
+  126,661 bytes. Viewed at full size and as a 300 px downscale —
+  all 12 stories present, masthead, heroes, grid and numbers strip
+  legible at a glance. main.py run twice, byte-identical output.
 
-## Verification output
+## Files
 
-- `assets/entry.png`: 1024×1024 RGB PNG, 23,666 bytes
-  (sha256 `b6937eb0b1a56c2e5aa48772f4cc5d7ff2b2050b7d6b082fcbc03f08afca32cd`)
-- `python3 main.py` run 1 and run 2: both wrote `/output/entry.png`,
-  23,666 bytes, sha256 identical to the asset above. Determinism
-  confirmed.
-- `main.py` imports only `hashlib`, `struct` and `pathlib` (stdlib);
-  `build_image.py` imports only `hashlib`, `math`, `struct`, `zlib`
-  and `pathlib` (stdlib). No network calls anywhere.
-
-## Design decisions
-
-1. **Pure-stdlib renderer.** Writing the PNG encoder and the
-   typeface by hand guarantees every line is authored in this
-   session and removes the Pillow dependency entirely, so the whole
-   repo — renderer and submitted program alike — runs anywhere
-   Python runs.
-2. **All-caps pixel typeface.** A 5×7 face only needs A–Z, digits
-   and punctuation, and capitals suit a newspaper front page. The
-   bold option keeps headlines readable at a glance.
-3. **Same 12 stories, same layout shape.** The poster keeps the
-   masthead / 3 heroes / 8-grid / numbers strip structure and the
-   verified facts from NEWS.md; only the implementation is new.
-4. **Asset-copy program.** Guarantees byte-identical deterministic
-   output in the grading sandbox. The new IHDR check catches a
-   wrong-sized asset before it can be submitted.
-
-## Open items (for the parent agent — needs the browser)
-
-1. **Upload the new files to GitHub.** This environment has no
-   GitHub login (`gh` unauthenticated; the zero-two-1836 account
-   logs in via Google OAuth in the parent's browser). Repo:
-   `world-news-19-nov-2026` (already exists, HEAD b80f3c9). Upload
-   the new `build_image.py`, `main.py`, `README.md`, `NEWS.md`,
-   `TRANSCRIPT.md` and `assets/entry.png`; record the new HEAD SHA.
-2. **Bundle + submit via the level-24 kit** once the repo is updated
-   (see the task brief: sanitized parent as --parent-session,
-   prompt = an exact user message, real system-prompt file from
-   ~/workspace/system/system_prompt.md per the level-24 rule, usage
-   rows for this agent only, verify the bundle is CLEAN before
-   submitting). Deadline Sat 21 Nov 2026 07:00 WIB. No fee is due.
+- `build_image.py` — the Pillow renderer (this session's own code).
+- `main.py` — stdlib-only entrypoint, copies the poster to /output.
+- `assets/entry.png` — the finished 1024×1024 poster.
+- `NEWS.md` — the 12 verified stories of 19 Nov 2026.
+- `README.md` — entry description and run instructions.
