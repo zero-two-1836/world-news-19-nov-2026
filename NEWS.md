@@ -48,3 +48,9 @@ Also noted in the footer: the Israeli military launches a rare ground
 operation in Gaza beyond the Yellow Line; a Russian military aircraft
 crashes in Siberia killing 19; Nvidia's acting CEO promises earlier
 pay raises and more stock grants after Jensen Huang's resignation.
+
+Poster v3 (round 3, 19 Nov 2026): all 12 stories are drawn on the
+poster itself — the 3 heroes (GTA VI, Shenzhen, Anthropic IPO) plus
+a 3×3 grid (Voyager 1, U.S.–Iran, EU loan, Crimean Bridge, Cyclone
+Akvan, Van Gogh, Myanmar, Jeffries, Finland). The footer carries the
+Gaza operation, the Siberia crash and the Nvidia item.
