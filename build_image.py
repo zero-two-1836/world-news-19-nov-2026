@@ -1,415 +1,605 @@
 #!/usr/bin/env python3
-"""Build the front-page image for the make.fun bounty
-"Sum up 19 November's world news in one image".
+"""Render the 19 November 2026 world-news poster as a 1024x1024 PNG.
 
-A poster, in the style of the news 17/18 v2 rebuilds: three large
-flat-illustration hero panels (GTA VI, the Shenzhen trilateral,
-Anthropic's IPO), an 8-story grid with one-line headlines, and a
-numbers strip. No text under 15px except the source footer. Same
-12 stories, same verified facts (see NEWS.md).
+Pure standard library: a tiny raster canvas, a 5x7 pixel typeface
+drawn at several scales, and a hand-written PNG encoder (zlib +
+struct). No third-party packages, no network, fully deterministic.
 
-Run once, locally, to produce assets/entry.png (1024x1024, <=1 MiB).
-The submitted program (main.py) is stdlib-only and copies that asset to
-/output/entry.png deterministically; this builder is kept in the repo so
-anyone can see exactly how the image was made.
+Layout (top to bottom): navy masthead with the paper name and the
+day line, a red rule, a one-line kicker, three illustrated lead
+stories, an eight-story grid with pictogram icons, a numbers strip,
+and a sources footer. Twelve stories in total, six continents.
 
-News verified 2026-11-19 from BBC, Reuters/AP wires via One Turn News,
-Hansen Intel, Foreign Exchanges, Al Jazeera and NPR summaries of
-19 Nov 2026. Procedural drawing only (Pillow): no AI image generation,
-no photos.
+Run:  python3 build_image.py
+Writes: assets/entry.png  (1024x1024 RGB PNG)
 """
+
+import hashlib
 import math
-import random
-import textwrap
-from PIL import Image, ImageDraw, ImageFont
+import struct
+import zlib
+from pathlib import Path
 
 W, H = 1024, 1024
-PAPER = (248, 244, 233)
-INK = (20, 20, 22)
-NAVY = (20, 33, 61)
-RED = (178, 34, 34)
-GREY = (90, 88, 82)
-RULE = (180, 175, 160)
-CARD = (255, 252, 245)
-GOLD = (214, 200, 150)
 
-SERIF_B = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf"
-SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-SANS_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-
-
-def font(path, size):
-    return ImageFont.truetype(path, size)
+# ---------------------------------------------------------------- palette
+CREAM = (245, 239, 224)      # page background
+PAPER = (255, 252, 244)      # card background
+NAVY = (27, 42, 74)          # masthead / numbers strip
+NAVY_DEEP = (15, 26, 52)     # IPO panel
+GOLD = (216, 178, 58)        # masthead subline, IPO figure
+RED = (176, 42, 48)          # rule, kickers, labels
+INK = (30, 30, 30)           # headlines
+GREY = (105, 105, 100)       # body copy, footer
+LINE = (198, 190, 172)       # card outlines
+SKY = (198, 211, 220)        # Shenzhen sky
+GREEN = (46, 160, 90)        # IPO bars / trend
+GREEN_LT = (110, 220, 150)   # IPO trend line
 
 
-def wrap(draw, text, fnt, width):
-    """Word-wrap text to fit pixel width; returns list of lines."""
-    words, lines, cur = text.split(), [], ""
-    for w in words:
-        trial = (cur + " " + w).strip()
-        if draw.textlength(trial, font=fnt) <= width:
+# ---------------------------------------------------------------- 5x7 font
+# Each glyph is 7 rows of 5 cells; '#' is ink, '.' is empty.
+# All poster copy is set in capitals, so the face only needs
+# A-Z, 0-9 and the punctuation the headlines use.
+FONT = {
+    'A': (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    'B': ("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
+    'C': (".####", "#....", "#....", "#....", "#....", "#....", ".####"),
+    'D': ("####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."),
+    'E': ("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    'F': ("#####", "#....", "#....", "####.", "#....", "#....", "#...."),
+    'G': (".####", "#....", "#....", "#.###", "#...#", "#...#", ".###."),
+    'H': ("#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    'I': ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "#####"),
+    'J': ("..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."),
+    'K': ("#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"),
+    'L': ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    'M': ("#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
+    'N': ("#...#", "##..#", "#.#.#", "#.#.#", "#..##", "#..##", "#...#"),
+    'O': (".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    'P': ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
+    'Q': (".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"),
+    'R': ("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+    'S': (".####", "#....", "#....", ".###.", "....#", "....#", "####."),
+    'T': ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
+    'U': ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    'V': ("#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."),
+    'W': ("#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"),
+    'X': ("#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"),
+    'Y': ("#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."),
+    'Z': ("#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"),
+    '0': (".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."),
+    '1': ("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    '2': (".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"),
+    '3': ("####.", "....#", "....#", ".###.", "....#", "....#", "####."),
+    '4': ("...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
+    '5': ("#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
+    '6': (".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."),
+    '7': ("#####", "....#", "...#.", "...#.", "..#..", "..#..", "..#.."),
+    '8': (".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
+    '9': (".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."),
+    ' ': (".....", ".....", ".....", ".....", ".....", ".....", "....."),
+    '.': (".....", ".....", ".....", ".....", ".....", ".##..", ".##.."),
+    ',': (".....", ".....", ".....", ".....", ".##..", ".##..", ".#..."),
+    ';': (".....", ".##..", ".##..", ".....", ".##..", ".##..", ".#..."),
+    ':': (".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."),
+    '!': ("..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."),
+    '?': (".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."),
+    "'": ("..#..", "..#..", ".#...", ".....", ".....", ".....", "....."),
+    '"': (".#.#.", ".#.#.", ".#.#.", ".....", ".....", ".....", "....."),
+    '-': (".....", ".....", ".....", ".###.", ".....", ".....", "....."),
+    '\u2014': (".....", ".....", ".....", "#####", ".....", ".....", "....."),
+    '\u00b7': (".....", ".....", ".##..", ".##..", ".....", ".....", "....."),
+    '$': ("..#..", ".####", "#.#.#", ".###.", "..#.#", "####.", "..#.."),
+    '\u20ac': (".###.", "#...#", "#....", "####.", "#....", "#...#", ".###."),
+    '%': ("#...#", "#..#.", "...#.", "..#..", ".#...", "#.#.#", "#...#"),
+    '(': ("...##", "..#..", ".#...", ".#...", ".#...", "..#..", "...##"),
+    ')': ("##...", "..#..", "...#.", "...#.", "...#.", "..#..", "##..."),
+    '/': ("....#", "...#.", "...#.", "..#..", ".#...", ".#...", "#...."),
+    '&': (".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"),
+    '+': (".....", "..#..", "..#..", ".###.", "..#..", "..#..", "....."),
+    '=': (".....", ".....", ".###.", ".....", ".###.", ".....", "....."),
+}
+BLANK = (".....",) * 7
+
+
+def glyph(ch):
+    """Return the 7-row bitmap for a character (blank if unknown)."""
+    return FONT.get(ch, BLANK)
+
+
+def text_width(s, scale):
+    """Pixel width of a string at a scale (glyph 5*scale + 1*scale gap)."""
+    if not s:
+        return 0
+    return len(s) * 6 * scale - scale
+
+
+def wrap(s, scale, max_w):
+    """Split a string into lines that fit max_w pixels at a scale."""
+    words = s.split(" ")
+    lines, cur = [], ""
+    for word in words:
+        trial = word if not cur else cur + " " + word
+        if text_width(trial, scale) <= max_w or not cur:
             cur = trial
         else:
-            if cur:
-                lines.append(cur)
-            cur = w
+            lines.append(cur)
+            cur = word
     if cur:
         lines.append(cur)
     return lines
 
 
-def para(draw, x, y, text, fnt, width, fill=INK, leading=None):
-    lines = wrap(draw, text, fnt, width)
-    lh = leading or int(fnt.size * 1.32)
-    for ln in lines:
-        draw.text((x, y), ln, font=fnt, fill=fill)
-        y += lh
-    return y
+# ---------------------------------------------------------------- canvas
+class Canvas:
+    """An RGB raster backed by a bytearray, with rect/circle/line/text."""
+
+    def __init__(self, w, h, bg):
+        self.w, self.h = w, h
+        self.buf = bytearray(w * h * 3)
+        self.fill_rect(0, 0, w, h, bg)
+
+    def _off(self, x, y):
+        return (y * self.w + x) * 3
+
+    def px(self, x, y, c):
+        if 0 <= x < self.w and 0 <= y < self.h:
+            o = self._off(x, y)
+            self.buf[o:o + 3] = bytes(c)
+
+    def fill_rect(self, x, y, w, h, c):
+        x0, y0 = max(x, 0), max(y, 0)
+        x1, y1 = min(x + w, self.w), min(y + h, self.h)
+        if x1 <= x0 or y1 <= y0:
+            return
+        row = bytes(c) * (x1 - x0)
+        for yy in range(y0, y1):
+            o = self._off(x0, yy)
+            self.buf[o:o + len(row)] = row
+
+    def outline(self, x, y, w, h, c, t=1):
+        self.fill_rect(x, y, w, t, c)
+        self.fill_rect(x, y + h - t, w, t, c)
+        self.fill_rect(x, y, t, h, c)
+        self.fill_rect(x + w - t, y, t, h, c)
+
+    def hline(self, x, y, length, c, t=1):
+        self.fill_rect(x, y - t // 2, length, t, c)
+
+    def vline(self, x, y, length, c, t=1):
+        self.fill_rect(x - t // 2, y, t, length, c)
+
+    def line(self, x0, y0, x1, y1, c, t=1):
+        """Bresenham line with a square brush of side t."""
+        dx, dy = abs(x1 - x0), abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err, x, y = dx - dy, x0, y0
+        half = t // 2
+        while True:
+            self.fill_rect(x - half, y - half, t, t, c)
+            if x == x1 and y == y1:
+                return
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            if e2 < dx:
+                err += dx
+                y += sy
+
+    def polyline(self, pts, c, t=1):
+        for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+            self.line(ax, ay, bx, by, c, t)
+
+    def disc(self, cx, cy, r, c):
+        """Filled circle, scanline by scanline."""
+        for dy in range(-r, r + 1):
+            half = int(math.sqrt(max(r * r - dy * dy, 0)))
+            self.fill_rect(cx - half, cy + dy, half * 2 + 1, 1, c)
+
+    def ring(self, cx, cy, r, c, t=2):
+        for dy in range(-r, r + 1):
+            half = int(math.sqrt(max(r * r - dy * dy, 0)))
+            inner = int(math.sqrt(max((r - t) * (r - t) - dy * dy, 0))) if r - t > 0 else 0
+            self.fill_rect(cx - half, cy + dy, half - inner, 1, c)
+            self.fill_rect(cx + inner, cy + dy, half - inner + 1, 1, c)
+
+    def polygon(self, pts, c):
+        """Scanline-filled polygon (any vertex count)."""
+        if len(pts) < 3:
+            return
+        ys = [p[1] for p in pts]
+        for y in range(min(ys), max(ys) + 1):
+            xs = []
+            for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
+                if (ay <= y < by) or (by <= y < ay):
+                    xs.append(ax + (y - ay) * (bx - ax) / (by - ay))
+            xs.sort()
+            for x0, x1 in zip(xs[::2], xs[1::2]):
+                self.fill_rect(int(math.ceil(x0)), y, int(math.floor(x1)) - int(math.ceil(x0)) + 1, 1, c)
+
+    def star(self, cx, cy, r_out, r_in, c, points=5, rot=-math.pi / 2):
+        pts = []
+        for i in range(points * 2):
+            r = r_out if i % 2 == 0 else r_in
+            a = rot + i * math.pi / points
+            pts.append((int(cx + r * math.cos(a)), int(cy + r * math.sin(a))))
+        self.polygon(pts, c)
+
+    def text(self, s, x, y, scale, c, bold=False):
+        """Draw a string; returns the x just past the last glyph.
+
+        With bold=True each set pixel is one unit wider, which
+        thickens the strokes so headlines stay readable when the
+        poster is shrunk to ~300px across. The advance width is
+        unchanged, so centring and wrapping still work.
+        """
+        cx = x
+        pw = scale + 1 if bold else scale
+        for ch in s:
+            g = glyph(ch)
+            for row, bits in enumerate(g):
+                for col, bit in enumerate(bits):
+                    if bit == '#':
+                        self.fill_rect(cx + col * scale, y + row * scale,
+                                       pw, scale, c)
+            cx += 6 * scale
+        return cx
+
+    def text_centred(self, s, cx, y, scale, c, bold=False):
+        self.text(s, cx - text_width(s, scale) // 2, y, scale, c, bold=bold)
+
+    def para(self, s, x, y, scale, max_w, c, leading=None, bold=False):
+        """Wrapped paragraph; returns the y just past the last line."""
+        lh = leading if leading is not None else 9 * scale
+        for line in wrap(s, scale, max_w):
+            self.text(line, x, y, scale, c, bold=bold)
+            y += lh
+        return y
 
 
-def kicker(draw, x, y, text, color=RED, size=17):
-    f = font(SANS_B, size)
-    draw.text((x, y), text.upper(), font=f, fill=color)
-    return y + size + 6
-
-
-def fit_font(draw, text, path, start_size, max_width, min_size=15):
-    """Largest font size at/below start_size whose text fits max_width."""
-    size = start_size
-    while size > min_size:
-        f = font(path, size)
-        if draw.textlength(text, font=f) <= max_width:
-            return f
-        size -= 1
-    return font(path, min_size)
-
-
-def starburst(d, cx, cy, r_out, r_in, spikes, fill):
-    pts = []
-    for i in range(spikes * 2):
-        r = r_out if i % 2 == 0 else r_in
-        a = math.pi * i / spikes - math.pi / 2
-        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
-    d.polygon(pts, fill=fill)
-
-
-def bezier(p0, p1, p2, n=40):
-    pts = []
-    for i in range(n + 1):
-        t = i / n
-        x = (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t ** 2 * p2[0]
-        y = (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t ** 2 * p2[1]
-        pts.append((x, y))
-    return pts
-
-
-# ---------- hero illustrations (flat, procedural) ----------
-
-def draw_gta(d, x0, y0, w, h):
-    """Vice City sunset: purple-to-orange sky, slatted sun, palms, skyline."""
-    bands = [(88, 28, 88), (150, 40, 110), (198, 58, 110),
-             (232, 90, 90), (255, 140, 60), (255, 175, 90)]
-    bh = h // len(bands)
-    for i, c in enumerate(bands):
-        d.rectangle([x0, y0 + i * bh, x0 + w, y0 + (i + 1) * bh], fill=c)
-    # sun with horizontal slits, upper right
-    sx, sy, sr = x0 + w - 66, y0 + 52, 30
-    d.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(255, 232, 160))
-    for yy in (sy - 8, sy + 2, sy + 12):
-        d.rectangle([sx - sr, yy, sx + sr, yy + 4], fill=(232, 90, 90))
-    # palm silhouettes: trunk + 5 fronds each
-    def palm(px, py, s, lean):
-        d.polygon([(px - 4 * s, py), (px + 4 * s, py),
-                   (px + 2 * s + lean, py - 62 * s),
-                   (px - 2 * s + lean, py - 62 * s)], fill=(24, 10, 28))
-        tx, ty = px + lean, py - 62 * s
-        for ang in (-150, -110, -70, -30, 10):
-            a = math.radians(ang)
-            ex, ey = tx + 34 * s * math.cos(a), ty + 26 * s * math.sin(a)
-            d.line([(tx, ty), (ex, ey)], fill=(24, 10, 28), width=int(5 * s))
-    palm(x0 + 34, y0 + h - 34, 1.0, 8)
-    palm(x0 + w - 40, y0 + h - 34, 0.85, -8)
-    # skyline with lit windows, bottom
-    d.rectangle([x0, y0 + h - 34, x0 + w, y0 + h], fill=(24, 10, 28))
-    rnd = random.Random(19)
-    bx = x0 + 8
-    while bx < x0 + w - 20:
-        bw = rnd.randint(18, 34)
-        bh2 = rnd.randint(14, 30)
-        d.rectangle([bx, y0 + h - 34 - bh2, bx + bw, y0 + h - 34],
-                    fill=(40, 16, 44))
-        for wy in range(y0 + h - 30 - bh2, y0 + h - 36, 8):
-            for wx in range(bx + 4, bx + bw - 3, 8):
-                if rnd.random() < 0.5:
-                    d.rectangle([wx, wy, wx + 3, wy + 4],
-                                fill=(255, 210, 110))
+# ---------------------------------------------------------------- scenes
+def draw_sunset(cv, x, y, w, h):
+    """Vice City sunset: banded sky, striped sun, palms, skyline, road."""
+    bands = [((64, 32, 96), 0.00), ((150, 40, 110), 0.28),
+             ((232, 84, 60), 0.55), ((245, 150, 60), 0.78),
+             ((250, 200, 90), 1.00)]
+    for (col, f0), (_, f1) in zip(bands, bands[1:] + [(None, 1.0)]):
+        cv.fill_rect(x, y + int(h * f0), w, int(h * (f1 - f0)) + 1, col)
+    # striped sun, upper right
+    sx, sy, sr = x + w - 78, y + 52, 36
+    cv.disc(sx, sy, sr, (250, 224, 130))
+    for dy in (-8, 4, 16):
+        cv.fill_rect(sx - sr, sy + dy, sr * 2, 5, (232, 84, 60))
+    # skyline silhouettes
+    base = y + h - 46
+    bx = x + 6
+    heights = [52, 34, 66, 44, 78, 38, 58, 30, 70, 48]
+    for hh in heights:
+        bw = 26
+        cv.fill_rect(bx, base - hh, bw, hh + 46, (38, 18, 52))
+        for wy in range(base - hh + 8, base - 6, 12):
+            cv.fill_rect(bx + 6, wy, 4, 5, (250, 200, 90))
         bx += bw + 4
-    # water shimmer
-    d.rectangle([x0, y0 + h - 8, x0 + w, y0 + h], fill=(60, 20, 70))
-    for xx in range(6, w, 26):
-        d.line([(x0 + xx, y0 + h - 5), (x0 + xx + 12, y0 + h - 5)],
-               fill=(255, 175, 120), width=2)
+    # road with dashes
+    cv.fill_rect(x, y + h - 22, w, 22, (28, 14, 40))
+    for dx in range(x + 8, x + w - 12, 30):
+        cv.fill_rect(dx, y + h - 12, 16, 3, (250, 200, 90))
+    # two palms, left and right
+    for px, lean in ((x + 34, -14), (x + w - 40, 12)):
+        top = (px + lean, y + 58)
+        cv.line(px, y + 128, top[0], top[1], (28, 14, 40), 5)
+        for ang in (-70, -35, 0, 35, 70):
+            a = math.radians(ang - 90)
+            ex = top[0] + int(30 * math.cos(a))
+            ey = top[1] + int(30 * math.sin(a)) + 8
+            cv.line(top[0], top[1], ex, ey, (28, 14, 40), 3)
 
 
-def draw_trilateral(d, x0, y0, w, h):
-    """Shenzhen skyline, three flag poles: US, China, Russia."""
-    d.rectangle([x0, y0, x0 + w, y0 + h], fill=(198, 208, 220))
-    d.rectangle([x0, y0 + h - 52, x0 + w, y0 + h], fill=(70, 76, 88))
-    # skyline towers
-    rnd = random.Random(11)
-    bx = x0 + 6
-    while bx < x0 + w - 16:
-        bw = rnd.randint(16, 30)
-        bh2 = rnd.randint(18, 46)
-        d.rectangle([bx, y0 + h - 52 - bh2, bx + bw, y0 + h - 52],
-                    fill=(52, 58, 70))
-        if rnd.random() < 0.4:
-            d.polygon([(bx + bw // 2 - 3, y0 + h - 52 - bh2),
-                       (bx + bw // 2 + 3, y0 + h - 52 - bh2),
-                       (bx + bw // 2, y0 + h - 62 - bh2)], fill=(52, 58, 70))
-        bx += bw + 5
-    # flag poles + flags
-    poles = [x0 + 52, x0 + w // 2, x0 + w - 62]
-    fw, fh = 46, 30
-    for i, px in enumerate(poles):
-        d.line([(px, y0 + 18), (px, y0 + 118)], fill=(40, 40, 44), width=3)
-        fx, fy = px + 2, y0 + 18
-        if i == 0:  # United States
-            for s in range(7):
-                d.rectangle([fx, fy + s * 4, fx + fw, fy + (s + 1) * 4],
-                            fill=(178, 34, 34) if s % 2 == 0 else (255, 255, 255))
-            d.rectangle([fx, fy, fx + 19, fy + 14], fill=(20, 33, 61))
-            for sy in (fy + 3, fy + 7, fy + 11):
-                for sx in (fx + 3, fx + 9, fx + 15):
-                    d.ellipse([sx - 1, sy - 1, sx + 1, sy + 1],
-                              fill=(255, 255, 255))
-        elif i == 1:  # China
-            d.rectangle([fx, fy, fx + fw, fy + fh], fill=(222, 40, 30))
-            starburst(d, fx + 10, fy + 9, 7, 3, 5, (255, 220, 60))
-            for (sx, sy) in ((fx + 26, fy + 5), (fx + 32, fy + 10),
-                             (fx + 30, fy + 17), (fx + 23, fy + 18)):
-                starburst(d, sx, sy, 3, 1, 5, (255, 220, 60))
-        else:  # Russia
-            for s, c in enumerate(((255, 255, 255), (30, 90, 200),
-                                   (210, 40, 40))):
-                d.rectangle([fx, fy + s * 10, fx + fw, fy + (s + 1) * 10],
-                            fill=c)
-    # gold handshake disc between the poles, lower centre
-    cx, cy = x0 + w // 2, y0 + 128
-    d.ellipse([cx - 20, cy - 20, cx + 20, cy + 20], fill=(255, 205, 60),
-              outline=(178, 140, 40), width=2)
-    d.line([(cx - 11, cy - 2), (cx - 2, cy + 7), (cx + 12, cy - 8)],
-           fill=(20, 33, 61), width=4)
+def draw_shenzhen(cv, x, y, w, h):
+    """Three flags over a Shenzhen skyline, gold deal disc below."""
+    cv.fill_rect(x, y, w, h, SKY)
+    # skyline, two depths
+    for bx, bh, col in ((x + 4, 58, (120, 134, 148)),
+                        (x + 52, 84, (96, 110, 124)),
+                        (x + 108, 66, (120, 134, 148)),
+                        (x + 158, 96, (88, 100, 114)),
+                        (x + 214, 70, (120, 134, 148)),
+                        (x + 262, 52, (96, 110, 124))):
+        cv.fill_rect(bx, y + h - 44 - bh, 44, bh + 44, col)
+    # ground
+    cv.fill_rect(x, y + h - 44, w, 44, (74, 84, 96))
+    # three flagpoles and flags
+    pole_tops = y + 26
+    pole_bot = y + h - 44
+    flags = [
+        (x + 44, 'us'), (x + 136, 'cn'), (x + 228, 'ru'),
+    ]
+    for fx, kind in flags:
+        cv.vline(fx, pole_tops, pole_bot - pole_tops, (40, 40, 40), 3)
+        fw, fh = 46, 28
+        if kind == 'us':
+            for i in range(7):
+                cv.fill_rect(fx + 2, pole_tops + i * 4, fw, 4,
+                             (176, 42, 48) if i % 2 == 0 else PAPER)
+            cv.fill_rect(fx + 2, pole_tops, 20, 16, NAVY)
+        elif kind == 'cn':
+            cv.fill_rect(fx + 2, pole_tops, fw, fh, (206, 32, 32))
+            cv.star(fx + 12, pole_tops + 9, 6, 3, GOLD)
+            cv.star(fx + 28, pole_tops + 6, 3, 1, GOLD)
+            cv.star(fx + 33, pole_tops + 13, 3, 1, GOLD)
+        else:
+            cv.fill_rect(fx + 2, pole_tops, fw, 9, PAPER)
+            cv.fill_rect(fx + 2, pole_tops + 9, fw, 10, (36, 84, 180))
+            cv.fill_rect(fx + 2, pole_tops + 19, fw, 9, (206, 32, 32))
+    # gold disc with a check = the deal
+    cx, cy = x + w // 2, y + h - 78
+    cv.disc(cx, cy, 24, GOLD)
+    cv.ring(cx, cy, 24, (150, 118, 30), 2)
+    cv.polyline([(cx - 11, cy), (cx - 3, cy + 9), (cx + 12, cy - 10)],
+                (30, 30, 30), 4)
 
 
-def draw_anthropic(d, x0, y0, w, h):
-    """Dark board, rising green chart, big $83 and ANT ticker."""
-    d.rectangle([x0, y0, x0 + w, y0 + h], fill=(16, 28, 54))
-    for yy in range(y0 + 20, y0 + h - 10, 28):
-        d.line([(x0 + 8, yy), (x0 + w - 8, yy)], fill=(40, 55, 90), width=1)
-    # ascending bars
-    rnd = random.Random(5)
-    bw, gap = 26, 10
-    bx = x0 + 16
-    heights = [26, 40, 34, 58, 74]
-    for bh2 in heights:
-        d.rectangle([bx, y0 + h - 26 - bh2, bx + bw, y0 + h - 26],
-                    fill=(34, 120, 80))
+def draw_ipo(cv, x, y, w, h):
+    """Anthropic IPO: giant gold $83, ticker line, rising bars + trend."""
+    cv.fill_rect(x, y, w, h, NAVY_DEEP)
+    cv.text("$83", x + 16, y + 14, 7, GOLD)
+    cv.text("ANT \u00b7 NASDAQ", x + 18, y + 66, 2, PAPER)
+    # rising bars
+    base = y + h - 16
+    bars = [34, 52, 44, 66, 84]
+    bw, gap = 34, 14
+    bx = x + 22
+    tops = []
+    for bh in bars:
+        cv.fill_rect(bx, base - bh, bw, bh, GREEN)
+        tops.append((bx + bw // 2, base - bh - 8))
         bx += bw + gap
-    # rising line with arrow
-    pts = [(x0 + 22, y0 + h - 60), (x0 + 80, y0 + h - 88),
-           (x0 + 138, y0 + h - 78), (x0 + 196, y0 + h - 112),
-           (x0 + 252, y0 + h - 132), (x0 + w - 22, y0 + h - 158)]
-    d.line(pts, fill=(80, 220, 130), width=5)
-    ex, ey = pts[-1]
-    d.polygon([(ex, ey), (ex - 16, ey - 2), (ex - 6, ey + 12)],
-              fill=(80, 220, 130))
-    # price
-    d.text((x0 + 16, y0 + 10), "$83", font=font(SERIF_B, 46),
-           fill=(255, 205, 60))
-    d.text((x0 + 16, y0 + 62), "ANT  ·  NASDAQ", font=font(SANS_B, 18),
-           fill=(255, 255, 255))
+    # trend line with arrowhead
+    cv.polyline(tops, GREEN_LT, 4)
+    ax, ay = tops[-1]
+    cv.polygon([(ax + 16, ay - 12), (ax + 2, ay - 2), (ax + 16, ay + 4)],
+               GREEN_LT)
 
 
-# ---------- small story icons (40x40 rounded square + white glyph) ----------
-
-def icon_star(d, x, y, bg):
-    d.rounded_rectangle([x, y, x + 40, y + 40], radius=8, fill=bg)
-    starburst(d, x + 20, y + 21, 15, 6, 5, (255, 255, 255))
+# ---------------------------------------------------------------- icons
+def icon_star(cv, x, y, s):
+    cv.star(x + s // 2, y + s // 2, s // 2 - 6, (s // 2 - 6) // 2 + 2, PAPER)
 
 
-def icon_flame(d, x, y, bg):
-    d.rounded_rectangle([x, y, x + 40, y + 40], radius=8, fill=bg)
-    d.polygon([(x + 20, y + 7), (x + 28, y + 18), (x + 30, y + 26),
-               (x + 24, y + 33), (x + 16, y + 33), (x + 10, y + 26),
-               (x + 12, y + 18)], fill=(255, 255, 255))
+def icon_drop(cv, x, y, s):
+    cx, cy = x + s // 2, y + s // 2 + 6
+    cv.polygon([(cx, y + 8), (cx - 16, cy + 2), (cx + 16, cy + 2)], PAPER)
+    cv.disc(cx, cy + 2, 16, PAPER)
 
 
-def icon_coin(d, x, y, bg):
-    d.rounded_rectangle([x, y, x + 40, y + 40], radius=8, fill=bg)
-    d.ellipse([x + 8, y + 8, x + 32, y + 32], fill=(255, 255, 255))
-    d.text((x + 13, y + 9), "€", font=font(SANS_B, 20), fill=bg)
+def icon_euro(cv, x, y, s):
+    cv.text("\u20ac", x + 16, y + 12, 6, PAPER)
 
 
-def icon_bridge(d, x, y, bg):
-    d.rounded_rectangle([x, y, x + 40, y + 40], radius=8, fill=bg)
-    d.arc([x + 7, y + 12, x + 33, y + 34], 180, 360,
-          fill=(255, 255, 255), width=3)
-    d.line([(x + 7, y + 28), (x + 33, y + 28)], fill=(255, 255, 255), width=3)
-    d.line([(x + 12, y + 28), (x + 12, y + 33)], fill=(255, 255, 255), width=3)
-    d.line([(x + 28, y + 28), (x + 28, y + 33)], fill=(255, 255, 255), width=3)
+def icon_bridge(cv, x, y, s):
+    cv.fill_rect(x + 10, y + s - 22, s - 20, 5, PAPER)          # deck
+    cv.fill_rect(x + 16, y + 22, 6, s - 44, PAPER)              # tower L
+    cv.fill_rect(x + s - 22, y + 22, 6, s - 44, PAPER)          # tower R
+    pts = [(x + 16, y + 26)]
+    for i in range(9):
+        t = i / 8
+        pts.append((int(x + 16 + t * (s - 32)),
+                    int(y + 26 - 14 * math.sin(t * math.pi))))
+    pts.append((x + s - 22, y + 26))
+    cv.polyline(pts, PAPER, 3)
 
 
-def icon_wave(d, x, y, bg):
-    d.rounded_rectangle([x, y, x + 40, y + 40], radius=8, fill=bg)
-    for yy in (14, 20, 26):
-        d.arc([x + 8, y + yy, x + 32, y + yy + 10], 180, 360,
-              fill=(255, 255, 255), width=3)
+def icon_wind(cv, x, y, s):
+    for j, yy in enumerate((y + 20, y + 34, y + 48)):
+        pts = []
+        for i in range(13):
+            t = i / 12
+            pts.append((int(x + 10 + t * (s - 26)),
+                        int(yy + 4 * math.sin(t * math.pi * 2 + j))))
+        cv.polyline(pts, PAPER, 3)
+        cv.fill_rect(x + s - 18, yy - 2, 8, 3, PAPER)
 
 
-def icon_paint(d, x, y, bg):
-    d.rounded_rectangle([x, y, x + 40, y + 40], radius=8, fill=bg)
-    d.line([(x + 12, y + 30), (x + 24, y + 12)], fill=(255, 255, 255), width=4)
-    d.polygon([(x + 24, y + 12), (x + 30, y + 8), (x + 32, y + 14),
-               (x + 27, y + 17)], fill=(255, 255, 255))
-    d.ellipse([x + 9, y + 27, x + 15, y + 33], fill=(255, 255, 255))
+def icon_brush(cv, x, y, s):
+    cv.line(x + 16, y + s - 16, x + s - 26, y + 22, PAPER, 6)
+    cv.polygon([(x + s - 26, y + 22), (x + s - 12, y + 16),
+                (x + s - 14, y + 32)], PAPER)
+    cv.fill_rect(x + 12, y + s - 20, 8, 8, PAPER)
 
 
-def icon_scale(d, x, y, bg):
-    d.rounded_rectangle([x, y, x + 40, y + 40], radius=8, fill=bg)
-    d.line([(x + 20, y + 8), (x + 20, y + 30)], fill=(255, 255, 255), width=3)
-    d.line([(x + 10, y + 12), (x + 30, y + 12)], fill=(255, 255, 255), width=3)
-    d.polygon([(x + 6, y + 20), (x + 14, y + 20), (x + 10, y + 27)],
-              fill=(255, 255, 255))
-    d.polygon([(x + 26, y + 20), (x + 34, y + 20), (x + 30, y + 27)],
-              fill=(255, 255, 255))
-    d.rectangle([x + 14, y + 30, x + 26, y + 33], fill=(255, 255, 255))
+def icon_scales(cv, x, y, s):
+    cx = x + s // 2
+    cv.vline(cx, y + 12, s - 30, PAPER, 4)
+    cv.hline(x + 10, y + 18, s - 20, PAPER, 4)
+    for sx in (x + 14, x + s - 14):
+        cv.vline(sx, y + 18, 14, PAPER, 2)
+        cv.polygon([(sx - 12, y + 32), (sx + 12, y + 32), (sx, y + 46)],
+                   PAPER)
+    cv.fill_rect(cx - 12, y + s - 16, 24, 5, PAPER)
 
 
-def icon_capitol(d, x, y, bg):
-    d.rounded_rectangle([x, y, x + 40, y + 40], radius=8, fill=bg)
-    d.pieslice([x + 12, y + 8, x + 28, y + 22], 180, 360,
-               fill=(255, 255, 255))
-    d.rectangle([x + 9, y + 22, x + 31, y + 25], fill=(255, 255, 255))
-    for cx in (13, 20, 27):
-        d.rectangle([x + cx - 1, y + 25, x + cx + 1, y + 32],
-                    fill=(255, 255, 255))
-    d.rectangle([x + 9, y + 32, x + 31, y + 34], fill=(255, 255, 255))
+def icon_capitol(cv, x, y, s):
+    cx = x + s // 2
+    cv.disc(cx, y + 34, 18, PAPER)
+    cv.fill_rect(cx - 18, y + 34, 36, 6, PAPER)   # hide lower half
+    cv.fill_rect(cx - 24, y + 40, 48, 8, PAPER)   # entablature
+    cv.fill_rect(cx - 20, y + 48, 40, 12, PAPER)  # base
+    cv.vline(cx, y + 10, 8, PAPER, 2)
 
 
-# ---------- page ----------
+ICONS = {
+    'star': (NAVY, icon_star),
+    'drop': (RED, icon_drop),
+    'euro': ((138, 125, 43), icon_euro),
+    'bridge': ((74, 74, 74), icon_bridge),
+    'wind': ((46, 111, 183), icon_wind),
+    'brush': ((123, 75, 166), icon_brush),
+    'scales': ((46, 125, 107), icon_scales),
+    'capitol': ((139, 46, 46), icon_capitol),
+}
 
-img = Image.new("RGB", (W, H), PAPER)
-d = ImageDraw.Draw(img)
-M = 28  # margin
 
-# ---- Masthead ----
-d.rectangle([0, 0, W, 88], fill=NAVY)
-d.text((M, 14), "THE WORLD IN ONE PICTURE", font=font(SERIF_B, 40),
-       fill=(255, 255, 255))
-d.text((M, 62), "THURSDAY  19  NOVEMBER  2026  ·  12 STORIES  ·  6 CONTINENTS",
-       font=font(SANS_B, 16), fill=GOLD)
-d.rectangle([0, 88, W, 92], fill=RED)
-
-# ---- Day line ----
-d.text((M, 104),
-       "THE DAY VICE CITY OPENED — AND THREE LEADERS SHOOK HANDS",
-       font=font(SANS_B, 19), fill=GREY)
-d.line([(M, 134), (W - M, 134)], fill=RULE, width=2)
-
-# ---- Hero row: 3 illustrated panels ----
-hero_y, hero_h, illus_h = 146, 348, 180
-col_w = (W - 2 * M - 2 * 16) // 3
-heroes = [
-    (draw_gta, "LEAD  ·  VICE CITY",
-     "Gamers enter Vice City as GTA VI rolls out",
-     "Rockstar's epic launches worldwide after a 13-year wait."),
-    (draw_trilateral, "DIPLOMACY  ·  SHENZHEN",
-     "Trump, Xi and Putin shake hands in Shenzhen",
-     "Trilateral talks at the APEC summit; Ukraine on the agenda."),
-    (draw_anthropic, "MARKETS  ·  IPO",
-     "Anthropic debuts at $83 in the biggest IPO ever",
-     "$81.3bn raised — the largest stock market debut in history."),
+# ---------------------------------------------------------------- content
+HEROES = [
+    {
+        'label': "LEAD \u00b7 VICE CITY",
+        'headline': "GAMERS ENTER VICE CITY AS GTA VI ROLLS OUT",
+        'sub': "ROCKSTAR'S EPIC LAUNCHES WORLDWIDE AFTER A 13-YEAR WAIT.",
+        'scene': draw_sunset,
+    },
+    {
+        'label': "DIPLOMACY \u00b7 SHENZHEN",
+        'headline': "TRUMP, XI AND PUTIN SHAKE HANDS IN SHENZHEN",
+        'sub': "TRILATERAL TALKS AT THE APEC SUMMIT; UKRAINE ON THE AGENDA.",
+        'scene': draw_shenzhen,
+    },
+    {
+        'label': "MARKETS \u00b7 IPO",
+        'headline': "ANTHROPIC DEBUTS AT $83 IN THE BIGGEST IPO EVER",
+        'sub': "$81.3BN RAISED \u2014 THE LARGEST STOCK MARKET DEBUT IN HISTORY.",
+        'scene': draw_ipo,
+    },
 ]
-for i, (draw_fn, tag, head, sub) in enumerate(heroes):
-    x = M + i * (col_w + 16)
-    d.rectangle([x, hero_y, x + col_w, hero_y + hero_h],
-                fill=CARD, outline=RULE, width=2)
-    draw_fn(d, x + 2, hero_y + 2, col_w - 4, illus_h)
-    ty = hero_y + illus_h + 12
-    ty = kicker(d, x + 14, ty, tag, size=13)
-    ty = para(d, x + 14, ty, head, font(SERIF_B, 24), col_w - 28, leading=29)
-    para(d, x + 14, ty + 2, sub, font(SANS, 15), col_w - 28, leading=19)
 
-# ---- Grid: 8 more stories, 2 columns x 4 rows ----
-gy = hero_y + hero_h + 14
-gy = kicker(d, M, gy, "More from Thursday", size=16)
-gy += 2
-grid = [
-    (icon_star, (20, 33, 61), "SPACE",
-     "Voyager 1 hits one light-day out",
-     "50 years on, the probe is 16 billion miles away."),
-    (icon_flame, (178, 34, 34), "THE GULF",
-     "U.S. and Iran trade fire again",
-     "Tehran widens attacks to Kuwait and Bahrain."),
-    (icon_coin, (120, 100, 20), "UKRAINE",
-     "EU proposes €45bn Ukraine loan",
-     "Repaid after Russia pays reparations."),
-    (icon_bridge, (70, 72, 78), "WAR",
-     "Crimean Bridge attacked again",
-     "Russian officials report a fresh strike."),
-    (icon_wave, (30, 90, 160), "WEATHER",
-     "Cyclone Akvan nears India's coast",
-     "Landfall expected between Machilipatnam and Puri."),
-    (icon_paint, (100, 60, 140), "ART",
-     "Van Gogh sells for record $190.4m",
-     "Price row over its Nazi-era history."),
-    (icon_scale, (20, 110, 110), "JUSTICE",
-     "Myanmar faces genocide verdict",
-     "UN court rules on the Rohingya case."),
-    (icon_capitol, (140, 40, 40), "UNITED STATES",
-     "Jeffries set to be first Black Speaker",
-     "Democrats nominate him to lead the House."),
+GRID = [
+    ('star', "SPACE", "VOYAGER 1 HITS ONE LIGHT-DAY OUT",
+     "50 YEARS ON, THE PROBE IS 16 BILLION MILES AWAY."),
+    ('drop', "THE GULF", "U.S. AND IRAN TRADE FIRE AGAIN",
+     "TEHRAN WIDENS ATTACKS TO KUWAIT AND BAHRAIN."),
+    ('euro', "UKRAINE", "EU PROPOSES \u20ac45BN UKRAINE LOAN",
+     "REPAID AFTER RUSSIA PAYS REPARATIONS."),
+    ('bridge', "WAR", "CRIMEAN BRIDGE ATTACKED AGAIN",
+     "RUSSIAN OFFICIALS REPORT A FRESH STRIKE."),
+    ('wind', "WEATHER", "CYCLONE AKVAN NEARS INDIA'S COAST",
+     "LANDFALL EXPECTED BETWEEN MACHILIPATNAM AND PURI."),
+    ('brush', "ART", "VAN GOGH SELLS FOR RECORD $190.4M",
+     "PRICE ROW OVER ITS NAZI-ERA HISTORY."),
+    ('scales', "JUSTICE", "MYANMAR FACES GENOCIDE VERDICT",
+     "UN COURT RULES ON THE ROHINGYA CASE."),
+    ('capitol', "UNITED STATES", "JEFFRIES SET TO BE FIRST BLACK SPEAKER",
+     "DEMOCRATS NOMINATE HIM TO LEAD THE HOUSE."),
 ]
-gcol_w = (W - 2 * M - 16) // 2
-row_h = 80
-for i in range(0, len(grid), 2):
-    for j, (icon_fn, color, tag, head, sub) in enumerate(grid[i:i + 2]):
-        x = M + j * (gcol_w + 16)
-        y = gy + (i // 2) * row_h
-        d.rounded_rectangle([x, y, x + gcol_w, y + row_h - 10], radius=8,
-                            fill=CARD, outline=RULE, width=1)
-        icon_fn(d, x + 10, y + 10, color)
-        tx = x + 60
-        d.text((tx, y + 8), tag, font=font(SANS_B, 12), fill=RED)
-        d.text((tx, y + 26), head,
-               font=fit_font(d, head, SANS_B, 20, gcol_w - 70), fill=INK)
-        d.text((tx, y + 52), sub, font=font(SANS, 15), fill=INK)
-gy = gy + 4 * row_h + 8
 
-# ---- Numbers strip ----
-d.rectangle([M, gy, W - M, gy + 70], fill=NAVY)
-nums = [("$81.3bn", "Anthropic IPO"), ("$190.4m", "Van Gogh sale"),
-        ("16bn mi", "Voyager 1 out"), ("€45bn", "EU Ukraine loan"),
-        ("19", "killed in jet crash")]
-seg = (W - 2 * M) // len(nums)
-for i, (n, label) in enumerate(nums):
-    cx = M + i * seg + seg // 2
-    f1, f2 = font(SANS_B, 26), font(SANS, 13)
-    d.text((cx - d.textlength(n, font=f1) / 2, gy + 8), n, font=f1,
-           fill=(255, 255, 255))
-    d.text((cx - d.textlength(label, font=f2) / 2, gy + 42), label, font=f2,
-           fill=GOLD)
-gy += 70 + 10
+NUMBERS = [
+    ("$81.3BN", "ANTHROPIC IPO"),
+    ("$190.4M", "VAN GOGH SALE"),
+    ("16BN MI", "VOYAGER 1 OUT"),
+    ("\u20ac45BN", "EU UKRAINE LOAN"),
+    ("19", "KILLED IN JET CRASH"),
+]
 
-# ---- Footer ----
-d.text((M, gy),
-       "Compiled from BBC, Reuters, AP, Al Jazeera and NPR reporting of 19 November 2026.",
-       font=font(SANS, 14), fill=GREY)
-d.text((M, gy + 18),
-       "Also: Israeli ground operation in Gaza · Russian jet crash kills 19 in Siberia · Finland OKs first nuclear waste store",
-       font=font(SANS, 14), fill=GREY)
-gy += 36
+FOOTER_1 = "COMPILED FROM BBC, REUTERS, AP, AL JAZEERA AND NPR REPORTING OF 19 NOVEMBER 2026."
+FOOTER_2 = ("ALSO: ISRAELI GROUND OPERATION IN GAZA \u00b7 RUSSIAN JET CRASH KILLS 19 "
+            "IN SIBERIA \u00b7 FINLAND OKS FIRST NUCLEAR WASTE STORE")
 
-img.save("assets/entry.png", optimize=True)
-print("saved assets/entry.png", img.size, "final y =", gy)
+
+# ---------------------------------------------------------------- build
+def build():
+    cv = Canvas(W, H, CREAM)
+    mx = 28  # side margin
+
+    # masthead
+    cv.fill_rect(0, 0, W, 92, NAVY)
+    cv.text_centred("THE WORLD IN ONE PICTURE", W // 2, 16, 5, PAPER,
+                    bold=True)
+    cv.text_centred("THURSDAY 19 NOVEMBER 2026 \u00b7 12 STORIES \u00b7 6 CONTINENTS",
+                    W // 2, 60, 2, GOLD)
+    cv.fill_rect(0, 92, W, 6, RED)
+
+    # kicker
+    cv.text_centred("THE DAY VICE CITY OPENED \u2014 AND THREE LEADERS SHOOK HANDS",
+                    W // 2, 110, 2, RED)
+
+    # three hero panels
+    pw, gap = 312, 16
+    hy, hh = 134, 292
+    img_h, txt_h = 186, 106
+    for i, hero in enumerate(HEROES):
+        px = mx + i * (pw + gap)
+        cv.fill_rect(px, hy, pw, hh, PAPER)
+        cv.outline(px, hy, pw, hh, LINE, 1)
+        hero['scene'](cv, px, hy, pw, img_h)
+        ty = hy + img_h
+        cv.text(hero['label'], px + 12, ty + 10, 1, RED)
+        y = cv.para(hero['headline'], px + 12, ty + 28, 2, pw - 24,
+                    INK, leading=17, bold=True)
+        cv.para(hero['sub'], px + 12, y + 4, 1, pw - 24, GREY, leading=10)
+
+    # grid header
+    gy = hy + hh + 16
+    cv.text("MORE FROM THURSDAY", mx, gy, 2, RED)
+
+    # eight-story grid, 2 columns x 4 rows
+    cw, ch, cgap, rgap = 476, 100, 16, 8
+    gy += 26
+    for i, (icon, cat, head, sub) in enumerate(GRID):
+        row, col = divmod(i, 2)
+        cx = mx + col * (cw + cgap)
+        cy = gy + row * (ch + rgap)
+        cv.fill_rect(cx, cy, cw, ch, PAPER)
+        cv.outline(cx, cy, cw, ch, LINE, 1)
+        bg, draw = ICONS[icon]
+        cv.fill_rect(cx + 12, cy + 14, 72, 72, bg)
+        draw(cv, cx + 12, cy + 14, 72)
+        tx = cx + 98
+        cv.text(cat, tx, cy + 12, 1, RED)
+        y = cv.para(head, tx, cy + 28, 2, cw - 110, INK, leading=17,
+                    bold=True)
+        cv.para(sub, tx, y + 3, 1, cw - 110, GREY, leading=10)
+
+    # numbers strip
+    ny = gy + 4 * ch + 3 * rgap + 14
+    cv.fill_rect(0, ny, W, 60, NAVY)
+    cell = (W - 2 * mx) // 5
+    for i, (num, lab) in enumerate(NUMBERS):
+        ccx = mx + i * cell + cell // 2
+        cv.text_centred(num, ccx, ny + 8, 3, GOLD)
+        cv.text_centred(lab, ccx, ny + 36, 1, CREAM)
+
+    # footer
+    fy = ny + 60 + 12
+    cv.text(FOOTER_1, mx, fy, 1, GREY)
+    cv.text(FOOTER_2, mx, fy + 12, 1, GREY)
+
+    final_y = fy + 12 + 7
+    assert final_y <= H, f"layout overflow: final y {final_y} > {H}"
+    return cv, final_y
+
+
+# ---------------------------------------------------------------- png out
+def _chunk(typ, data):
+    out = struct.pack('>I', len(data)) + typ + data
+    out += struct.pack('>I', zlib.crc32(typ + data) & 0xffffffff)
+    return out
+
+
+def write_png(path, cv):
+    raw = bytearray()
+    stride = cv.w * 3
+    for y in range(cv.h):
+        raw.append(0)  # filter: none
+        raw += cv.buf[y * stride:(y + 1) * stride]
+    ihdr = struct.pack('>IIBBBBB', cv.w, cv.h, 8, 2, 0, 0, 0)
+    blob = (b'\x89PNG\r\n\x1a\n'
+            + _chunk(b'IHDR', ihdr)
+            + _chunk(b'IDAT', zlib.compress(bytes(raw), 9))
+            + _chunk(b'IEND', b''))
+    Path(path).write_bytes(blob)
+    return len(blob)
+
+
+def main():
+    cv, final_y = build()
+    out = Path(__file__).resolve().parent / 'assets' / 'entry.png'
+    out.parent.mkdir(parents=True, exist_ok=True)
+    size = write_png(out, cv)
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    print(f"wrote {out} ({size} bytes, sha256 {digest})")
+    print(f"layout final y = {final_y} of {H}")
+
+
+if __name__ == '__main__':
+    main()
