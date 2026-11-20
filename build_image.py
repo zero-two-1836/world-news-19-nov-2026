@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """Render the 19 Nov 2026 world-news poster (1024x1024) with PIL.
 
-Round 4 rebuild, written from scratch in this session. Layout is a
-premium newspaper front page: navy masthead with edition marks, a
-red kicker with flanking rules, three hero cards with fully drawn
-illustrated scenes and serif display headlines, a 3x3 grid of the
-remaining stories with colour accent bars, a gold-ruled numbers
-strip and a source footer. All 12 stories from NEWS.md are present
-and legible. Pillow is the only dependency; output is deterministic.
+Round 6 rebuild. Layout is a premium newspaper front page: navy
+masthead with edition marks, a red kicker with flanking rules,
+three hero cards with fully drawn illustrated scenes and serif
+display headlines, a 3x3 grid of the remaining stories with colour
+accent bars, a gold-ruled numbers strip and a source footer. All
+12 stories from NEWS.md are present and legible.
+
+Round 6 changes: the whole poster is rendered supersampled (SS=2)
+through the SD draw proxy and downscaled with LANCZOS, so edges
+and text come out clean and anti-aliased; the hero scenes are
+richer (neon VICE CITY sign and a second car, an APEC SUMMIT
+banner in place of the check badge, a denser IPO candlestick
+chart with an area fill under the trend line); the cyclone and
+bridge grid icons are redrawn to read unmistakably; the numbers
+strip uses DejaVu Serif Bold so the euro sign cannot be misread.
+Pillow is the only dependency; output is deterministic.
 """
 import math
 import os
@@ -15,6 +24,7 @@ import random
 from PIL import Image, ImageDraw, ImageFont
 
 W = H = 1024
+SS = 2  # supersampling factor: draw at 2048, downscale to 1024
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "assets", "entry.png")
 
@@ -43,7 +53,64 @@ MONO_B = os.path.join(FDIR, "dejavu", "DejaVuSansMono-Bold.ttf")
 
 
 def font(path, size):
-    return ImageFont.truetype(path, size)
+    return ImageFont.truetype(path, size * SS)
+
+
+class SD:
+    """ImageDraw proxy that scales logical coordinates by SS.
+
+    Every painter below works in the poster's logical 1024x1024
+    space; the proxy maps coordinates, line widths and radii onto
+    the supersampled canvas, and textlength back into logical
+    units, so layout arithmetic is unchanged.
+    """
+
+    def __init__(self, draw, s):
+        self._d = draw
+        self._s = s
+
+    def _xy(self, xy):
+        s = self._s
+        if xy and isinstance(xy[0], (list, tuple)):
+            return [(x * s, y * s) for x, y in xy]
+        return [v * s for v in xy]
+
+    def _box(self, box):
+        s = self._s
+        return [box[0] * s, box[1] * s, box[2] * s, box[3] * s]
+
+    def line(self, xy, fill=None, width=1, joint=None):
+        self._d.line(self._xy(xy), fill=fill,
+                     width=max(1, int(width * self._s)), joint=joint)
+
+    def rectangle(self, box, fill=None, outline=None, width=1):
+        self._d.rectangle(self._box(box), fill=fill, outline=outline,
+                          width=max(1, int(width * self._s)))
+
+    def rounded_rectangle(self, box, radius=0, fill=None, outline=None,
+                          width=1):
+        self._d.rounded_rectangle(self._box(box),
+                                  radius=radius * self._s, fill=fill,
+                                  outline=outline,
+                                  width=max(1, int(width * self._s)))
+
+    def ellipse(self, box, fill=None, outline=None, width=1):
+        self._d.ellipse(self._box(box), fill=fill, outline=outline,
+                        width=max(1, int(width * self._s)))
+
+    def polygon(self, pts, fill=None, outline=None):
+        self._d.polygon(self._xy(pts), fill=fill, outline=outline)
+
+    def arc(self, box, start, end, fill=None, width=1):
+        self._d.arc(self._box(box), start, end, fill=fill,
+                    width=max(1, int(width * self._s)))
+
+    def text(self, xy, text, font=None, fill=None, anchor=None):
+        self._d.text((xy[0] * self._s, xy[1] * self._s), text,
+                     font=font, fill=fill, anchor=anchor)
+
+    def textlength(self, text, font=None):
+        return self._d.textlength(text, font=font) / self._s
 
 
 def fit_font(path, size, max_w, draw, text):
@@ -64,7 +131,10 @@ def vgrad(draw, box, top, bottom):
     x0, y0, x1, y1 = box
     h = max(1, y1 - y0)
     for y in range(y0, y1):
-        draw.line([(x0, y), (x1, y)], fill=lerp(top, bottom, (y - y0) / h))
+        # a 1-logical-pixel-tall rectangle, so the supersampling
+        # proxy fills every real row (a hairline would skip rows)
+        draw.rectangle([x0, y, x1, y + 1],
+                       fill=lerp(top, bottom, (y - y0) / h))
 
 
 def wrap(draw, text, fnt, max_w):
@@ -104,21 +174,29 @@ def star_points(cx, cy, r_out, r_in, n=5, rot=-90):
 
 # ---- hero illustrations (drawn fresh for round 4) --------------------
 def hero_vice_city(draw, box):
-    """Synthwave Vice City: star field, slit sun, skyline with a
-    spire tower, palms and a car cruising the neon road."""
+    """Synthwave Vice City: denser star field, haloed slit sun,
+    layered skyline with a spire tower, a neon VICE CITY sign,
+    palms, and two cars cruising the neon road."""
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
     vgrad(draw, box, (58, 20, 84), (238, 96, 62))
     rnd = random.Random(19)
-    # star field in the upper sky
-    for _ in range(26):
+    # star field in the upper sky, a few with sparkle crosses
+    for _ in range(44):
         sx = x0 + rnd.randint(4, w - 4)
         sy = y0 + rnd.randint(4, int(h * 0.30))
         r = rnd.choice([1, 1, 2])
         draw.ellipse([sx - r, sy - r, sx + r, sy + r],
                      fill=(255, 235, 200))
-    # big slit sun
+        if r == 2:
+            draw.line([(sx - 4, sy), (sx + 4, sy)], fill=(255, 235, 200),
+                      width=1)
+            draw.line([(sx, sy - 4), (sx, sy + 4)], fill=(255, 235, 200),
+                      width=1)
+    # big slit sun with a thin halo ring
     sx, sy, sr = x0 + w * 0.66, y0 + h * 0.36, 48
+    draw.ellipse([sx - sr - 7, sy - sr - 7, sx + sr + 7, sy + sr + 7],
+                 outline=(255, 170, 90), width=3)
     draw.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(255, 214, 90))
     for yy, hh in [(sy - 8, 4), (sy + 6, 5), (sy + 20, 6), (sy + 34, 7)]:
         draw.rectangle([sx - sr, yy, sx + sr, yy + hh], fill=(238, 96, 62))
@@ -132,7 +210,7 @@ def hero_vice_city(draw, box):
             draw.rectangle([bx, base - bh, bx + bw, base], fill=col)
             for wy in range(base - bh + 8, base - 6, 12):
                 for wx in range(bx + 4, bx + bw - 3, 9):
-                    if rnd.random() < 0.45:
+                    if rnd.random() < 0.55:
                         draw.rectangle([wx, wy, wx + 3, wy + 4],
                                        fill=(255, 205, 90))
             bx += bw + rnd.randint(2, 8)
@@ -143,15 +221,23 @@ def hero_vice_city(draw, box):
                   (spire_x, base - 158)], fill=(44, 18, 66))
     draw.ellipse([spire_x - 3, base - 164, spire_x + 3, base - 158],
                  fill=(255, 80, 90))
+    # neon sign on a front building, naming the city in the picture
+    sg_w, sg_x, sg_y = 78, x0 + 8, base - 88
+    draw.rectangle([sg_x, sg_y, sg_x + sg_w, sg_y + 22], fill=(26, 6, 44))
+    draw.rectangle([sg_x, sg_y, sg_x + sg_w, sg_y + 22],
+                   outline=(255, 80, 160), width=2)
+    draw.text((sg_x + sg_w // 2, sg_y + 4), "VICE CITY",
+              font=font(SANS_B, 12), fill=(255, 140, 210), anchor="ma")
     # palms
-    for px, ph in [(x0 + 30, 46), (x1 - 36, 54)]:
+    for px, ph in [(x0 + 30, 46), (x1 - 36, 54), (x0 + int(w * 0.50), 38)]:
         draw.line([(px, base), (px + 4, base - ph)], fill=(24, 8, 40),
                   width=4)
         for dx, dy in [(-16, -8), (-10, -16), (0, -18), (10, -16), (16, -8)]:
             draw.arc([px + dx - 8, base - ph + dy - 6,
                       px + dx + 8, base - ph + dy + 6],
                      200, 340, fill=(24, 8, 40), width=3)
-    # neon road with a hot-pink car
+    # neon road with a hot-pink car, its headlight beam, and a
+    # second smaller teal car further down the road
     draw.rectangle([x0, base, x1, y1], fill=(20, 8, 36))
     car_x, car_y = x0 + int(w * 0.42), y1 - 24
     draw.rounded_rectangle([car_x, car_y, car_x + 52, car_y + 12], radius=5,
@@ -165,6 +251,18 @@ def hero_vice_city(draw, box):
                  fill=(40, 40, 48))
     draw.rectangle([car_x + 52, car_y + 3, car_x + 62, car_y + 7],
                    fill=(255, 240, 150))
+    draw.polygon([(car_x + 62, car_y + 3), (car_x + 94, car_y - 2),
+                  (car_x + 94, car_y + 12), (car_x + 62, car_y + 7)],
+                 fill=(255, 224, 130))
+    c2x, c2y = x0 + int(w * 0.76), y1 - 19
+    draw.rounded_rectangle([c2x, c2y, c2x + 38, c2y + 9], radius=4,
+                           fill=(64, 200, 220))
+    draw.polygon([(c2x + 7, c2y), (c2x + 13, c2y - 7),
+                  (c2x + 27, c2y - 7), (c2x + 32, c2y)],
+                 fill=(150, 230, 240))
+    draw.ellipse([c2x + 6, c2y + 6, c2x + 12, c2y + 12], fill=(40, 40, 48))
+    draw.ellipse([c2x + 26, c2y + 6, c2x + 32, c2y + 12],
+                 fill=(40, 40, 48))
     for dx in range(x0 + 6, x1 - 10, 26):
         draw.rectangle([dx, y1 - 10, dx + 14, y1 - 6], fill=(255, 80, 160))
 
@@ -233,27 +331,31 @@ def hero_shenzhen(draw, box):
     for i, col in enumerate([(255, 255, 255), (0, 90, 180), (220, 40, 40)]):
         draw.rectangle([fx, fy + i * 11, fx + flag_w, fy + (i + 1) * 11],
                        fill=col)
-    # gold handshake badge
-    cx, cy, r = x0 + w // 2, base - 8, 32
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=GOLD,
-                 outline=(255, 255, 255), width=3)
-    draw.line([(cx - 14, cy), (cx - 4, cy + 11), (cx + 15, cy - 11)],
-              fill=NAVY, width=6)
+    # summit banner across the plaza, naming the event in the picture
+    bn_w = 184
+    bn_x = x0 + w // 2 - bn_w // 2
+    bn_y = y1 - 30
+    draw.rounded_rectangle([bn_x, bn_y, bn_x + bn_w, bn_y + 20], radius=4,
+                           fill=(122, 22, 36))
+    draw.text((x0 + w // 2, bn_y + 4), "APEC SUMMIT · SHENZHEN",
+              font=font(SANS_B, 12), fill=(255, 226, 150), anchor="ma")
 
 
 def hero_ipo(draw, box):
     """Anthropic IPO: navy terminal grid, ticker tape, huge $83,
-    candlesticks over rising bars and a gold trend arrow."""
+    seven candlesticks over rising bars, an area fill under the
+    gold trend line and its arrow."""
     x0, y0, x1, y1 = box
+    w = x1 - x0
     draw.rectangle(box, fill=NAVY)
     for gx in range(x0 + 24, x1 - 10, 34):
         draw.line([(gx, y0), (gx, y1)], fill=(32, 56, 100), width=1)
     for gy in range(y0 + 16, y1 - 10, 30):
         draw.line([(x0, gy), (x1, gy)], fill=(32, 56, 100), width=1)
-    # ticker tape
-    f_tape = font(MONO_B, 12)
-    draw.text((x0 + 12, y0 + 6), "ANT $83.00  ▲  VALUATION $1.4TN",
-              font=f_tape, fill=GOLD)
+    # ticker tape with the day's three IPO numbers
+    tape = "ANT $83.00 ▲ RAISES $81.3BN ▲ $1.4TN"
+    f_tape = fit_font(MONO_B, 12, w - 24, draw, tape)
+    draw.text((x0 + 12, y0 + 6), tape, font=f_tape, fill=GOLD)
     draw.line([(x0, y0 + 26), (x1, y0 + 26)], fill=(32, 56, 100), width=1)
     # big price, with the exchange label beside it (clear of the chart)
     f_big = font(SERIF_D, 62)
@@ -261,12 +363,20 @@ def hero_ipo(draw, box):
     f_sub = font(SANS_B, 13)
     draw.text((x0 + 178, y0 + 58), "ANT · NASDAQ", font=f_sub,
               fill=(255, 255, 255))
-    # candlesticks + bars
+    # candlesticks + bars; tops computed first for the area fill
     base = y1 - 14
-    heights = [24, 40, 32, 54, 72]
-    bw, gap = 30, 14
-    bx = x0 + 18
+    heights = [18, 30, 26, 42, 38, 56, 72]
+    bw, gap = 24, 10
+    bx = x0 + 16
     tops = []
+    for hh in heights:
+        tops.append((bx + bw // 2, base - hh - 10))
+        bx += bw + gap
+    pts = [(x, y - 4) for x, y in tops]
+    # area fill under the trend line, behind the candles
+    draw.polygon(pts + [(pts[-1][0], base - 12), (pts[0][0], base - 12)],
+                 fill=(26, 48, 88))
+    bx = x0 + 16
     for hh in heights:
         # candle body + wick
         cx = bx + bw // 2
@@ -275,11 +385,8 @@ def hero_ipo(draw, box):
         draw.rectangle([bx, base - hh, bx + bw, base - hh + 16],
                        fill=GREEN)
         draw.rectangle([bx, base - 10, bx + bw, base], fill=(30, 90, 60))
-        tops.append((cx, base - hh - 10))
         bx += bw + gap
     # trend line with arrow
-    pts = [(tops[0][0], tops[0][1] - 4)] + \
-          [(x, y - 4) for x, y in tops[1:]]
     draw.line(pts, fill=GOLD, width=4, joint="curve")
     ex, ey = pts[-1]
     draw.polygon([(ex, ey - 10), (ex + 14, ey + 2), (ex - 2, ey + 8)],
@@ -304,18 +411,30 @@ def icon(draw, kind, box, bg):
         f = font(SANS_B, 40)
         draw.text((cx - 13, cy - 26), "€", font=f, fill=white)
     elif kind == "bridge":
-        draw.arc([cx - 22, cy - 14, cx + 22, cy + 26], 180, 360,
-                 fill=white, width=5)
-        draw.line([(cx - 26, cy + 8), (cx + 26, cy + 8)], fill=white,
-                  width=4)
-        draw.line([(cx - 18, cy + 8), (cx - 18, cy + 22)], fill=white,
+        # suspension bridge: two towers, sagging main cables,
+        # suspenders and a deck
+        deck = cy + 14
+        for tx in (cx - 16, cx + 16):
+            draw.line([(tx, cy - 16), (tx, deck)], fill=white, width=4)
+        draw.line([(cx - 27, deck), (cx + 27, deck)], fill=white, width=4)
+        draw.line([(cx - 27, cy + 0), (cx - 16, cy - 14)], fill=white,
                   width=3)
-        draw.line([(cx + 18, cy + 8), (cx + 18, cy + 22)], fill=white,
+        draw.line([(cx - 16, cy - 14), (cx, cy + 5), (cx + 16, cy - 14)],
+                  fill=white, width=3, joint="curve")
+        draw.line([(cx + 16, cy - 14), (cx + 27, cy + 0)], fill=white,
                   width=3)
+        for dx, top in ((-8, cy - 5), (0, cy + 5), (8, cy - 5)):
+            draw.line([(cx + dx, top), (cx + dx, deck)], fill=white,
+                      width=2)
+        for px in (-22, 22):
+            draw.line([(cx + px, deck), (cx + px, deck + 7)],
+                      fill=white, width=3)
     elif kind == "waves":
-        for yy in (-14, -2, 10):
-            draw.arc([cx - 22, cy + yy - 8, cx + 22, cy + yy + 8],
-                     180, 360, fill=white, width=4)
+        # cyclone spiral: swept concentric arcs around a calm eye
+        draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], fill=white)
+        for r, a0 in ((8, 20), (13, 110), (18, 200), (23, 290)):
+            draw.arc([cx - r, cy - r, cx + r, cy + r], a0, a0 + 250,
+                     fill=white, width=4)
     elif kind == "brush":
         draw.line([(cx - 16, cy + 16), (cx + 6, cy - 6)], fill=white,
                   width=6)
@@ -406,8 +525,8 @@ NUMBERS = [
 
 
 def build():
-    img = Image.new("RGB", (W, H), PAPER)
-    d = ImageDraw.Draw(img)
+    img = Image.new("RGB", (W * SS, H * SS), PAPER)
+    d = SD(ImageDraw.Draw(img), SS)
     mx = 28  # side margin
 
     # ---- masthead: navy band, display-serif title, edition marks ----
@@ -421,7 +540,7 @@ def build():
            fill=(170, 185, 210))
     d.text((W - mx - 4, 34), "PRICE: ONE PICTURE", font=f_ed,
            fill=(170, 185, 210), anchor="ra")
-    f_date = font(SANS_B, 17)
+    f_date = font(SANS_B, 19)
     d.text((W // 2, 64),
            "THURSDAY 19 NOVEMBER 2026  ·  12 STORIES  ·  6 CONTINENTS",
            font=f_date, fill=GOLD, anchor="ma")
@@ -511,7 +630,9 @@ def build():
     ny0, ny1 = 872, 940
     d.rectangle([0, ny0, W, ny0 + 2], fill=GOLD)
     d.rectangle([0, ny0 + 2, W, ny1], fill=NAVY)
-    f_num = font(SERIF_D, 26)
+    # DejaVu Serif Bold: its $ and € glyphs stay unambiguous at
+    # small sizes, unlike the display face's euro, which reads as C
+    f_num = font(SERIF, 27)
     f_nlab = font(SANS_B, 11)
     seg = W // 5
     for i, (num, lab) in enumerate(NUMBERS):
@@ -533,6 +654,7 @@ def build():
            font=f_foot, fill=GRAY, anchor="ma")
 
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    img = img.resize((W, H), Image.LANCZOS)
     img.save(OUT, "PNG")
     print("wrote", OUT, os.path.getsize(OUT), "bytes")
 
